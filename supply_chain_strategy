@@ -615,31 +615,45 @@ def pipeline(client: TushareClient, strategy: SupplyChainStrategy,
     logger.info("=" * 65)
 
     prev_codes = {s["code"] for s in discovery.load_pool()}
-    pool = discovery.run_scan()
-    if not pool:
-        pool = discovery.load_pool()
-    new_stocks = discovery.get_new(pool, prev_codes)
-    logger.info(f"Pool: {len(pool)} stocks ({len(new_stocks)} new)")
-    if new_stocks and not dry and bark.key:
-        bark.push_new(new_stocks)
+    result = {"portfolio": [], "report": ""}
 
-    hold_data = fetch_delta(client, pool)
-    result = strategy.run(hold_data)
+    try:
+        pool = discovery.run_scan()
+        if not pool:
+            pool = discovery.load_pool()
+        new_stocks = discovery.get_new(pool, prev_codes)
+        logger.info(f"Pool: {len(pool)} stocks ({len(new_stocks)} new)")
+        if new_stocks and not dry and bark.key:
+            bark.push_new(new_stocks)
 
-    report = result["report"]
-    if new_stocks:
-        report += f"\n\n🎯 今日新发现{len(new_stocks)}只:\n"
-        for s in new_stocks[:5]:
-            report += f"   + {s['name']}({s['code']}) — {s['chain']} [{s['score']:.2f}]\n"
-    print("\n" + report)
+        hold_data = fetch_delta(client, pool)
+        result = strategy.run(hold_data)
 
-    if not dry and bark.key:
-        bark.push_report(report)
-        logger.info("✅ Report pushed")
-    elif dry:
-        logger.info("🧪 Dry-run: push skipped")
-    else:
-        logger.info("⚠️ Bark not configured: push skipped")
+        report = result["report"]
+        if new_stocks:
+            report += f"\n\n🎯 今日新发现{len(new_stocks)}只:\n"
+            for s in new_stocks[:5]:
+                report += f"   + {s['name']}({s['code']}) — {s['chain']} [{s['score']:.2f}]\n"
+        print("\n" + report)
+
+        if not dry and bark.key:
+            bark.push_report(report)
+            logger.info("✅ Report pushed")
+        elif dry:
+            logger.info("🧪 Dry-run: push skipped")
+        else:
+            logger.info("⚠️ Bark not configured: push skipped")
+
+    except Exception as e:
+        logger.error(f"Strategy error: {e}")
+        raise
+    finally:
+        # 确保 candidate_pool.json 始终存在
+        if not discovery.pool_path.exists():
+            logger.info("Creating empty candidate_pool.json")
+            discovery.save_pool([])
+        logger.info(f"Candidate pool: {discovery.pool_path.absolute()}")
+
     return result
 
 
