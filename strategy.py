@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 五大美股巨头A股供应链 | 增量抱团策略
+========================================
 全动态候选池 + 增量排名 + Bark推送
 
 Tokens 从环境变量读取（GitHub Actions Secrets 注入）：
@@ -35,6 +36,10 @@ import tushare as ts
 
 logger = logging.getLogger("strategy")
 
+# ============================================================================
+# 默认配置（策略参数，不含认证信息）
+# ============================================================================
+
 DEFAULT_CONFIG = {
     "top_n": 10,
     "weights": {"fund_delta": 0.50, "inst_delta": 0.30, "base_hold": 0.10, "small_cap_bonus": 0.10},
@@ -47,7 +52,12 @@ DEFAULT_CONFIG = {
         "large": {"max_mv": 999999, "bonus": 0.0},
     },
     "discovery": {"scan_days": 7, "thresholds": {"confirm": 0.5, "watching": 0.3}},
+    "logging": {"level": "INFO"},
 }
+
+# ============================================================================
+# 关键词定义
+# ============================================================================
 
 GIANT_KWS = {
     "nvidia": ["英伟达", "NVIDIA", "nvidia", "安谋", "GB200", "B200", "H100", "H200", "Blackwell"],
@@ -57,11 +67,14 @@ GIANT_KWS = {
     "google": ["谷歌", "Google", "GOOGLE", "Alphabet", "Gemini", "TPU", "Waymo"],
 }
 
-DIRECT_KWS = ["供应商", "一级供应商", "核心供应商", "tier1", "Tier1", "直接供应", "供货",
+DIRECT_KWS = [
+    "供应商", "一级供应商", "核心供应商", "tier1", "Tier1", "直接供应", "供货",
     "配套", "代工", "ODM", "OEM", "认证通过", "通过认证", "进入供应链", "纳入供应链",
-    "独家供应", "主供", "定点", "量产", "批量供货", "合作协议", "战略协议"]
+    "独家供应", "主供", "定点", "量产", "批量供货", "合作协议", "战略协议",
+]
 
-INDIRECT_KWS = ["光模块", "光器件", "光芯片", "CPO", "硅光", "800G", "1.6T",
+INDIRECT_KWS = [
+    "光模块", "光器件", "光芯片", "CPO", "硅光", "800G", "1.6T",
     "PCB", "覆铜板", "CCL", "高频覆铜板", "高速PCB",
     "刻蚀设备", "薄膜设备", "清洗设备", "半导体设备", "先进封装", "Chiplet",
     "AI芯片", "GPU", "算力", "智算中心", "数据中心",
@@ -69,13 +82,73 @@ INDIRECT_KWS = ["光模块", "光器件", "光芯片", "CPO", "硅光", "800G", 
     "HBM", "DDR5", "内存接口", "存储芯片",
     "汽车电子", "智能驾驶", "激光雷达", "BMS", "热管理", "线控制动", "一体化压铸",
     "人形机器人", "谐波减速器", "行星减速器", "滚珠丝杠", "空心杯电机", "无框力矩电机",
-    "高速铜缆", "DAC", "高频铜箔"]
+    "高速铜缆", "DAC", "高频铜箔",
+]
 
-NEGATIVE_KWS = ["未有合作", "没有供应", "否认", "澄清公告", "不实传闻",
-    "终止合作", "取消订单", "退出供应链", "被移除"]
+NEGATIVE_KWS = [
+    "未有合作", "没有供应", "否认", "澄清公告", "不实传闻",
+    "终止合作", "取消订单", "退出供应链", "被移除",
+]
+
+# 已知误报黑名单（地产/金融/消费/传统制造，与科技供应链无关）
+BLACKLIST = {
+    # 商业地产
+    "陆家嘴", "600663.SH",
+    "浦东金桥", "600639.SH",
+    "外高桥", "600648.SH",
+    "张江高科", "600895.SH",
+    # 房地产开发
+    "万科A", "000002.SZ",
+    "保利发展", "600048.SH",
+    "招商蛇口", "001979.SZ",
+    "金地集团", "600383.SH",
+    "华侨城A", "000069.SZ",
+    # 银行
+    "工商银行", "601398.SH",
+    "建设银行", "601939.SH",
+    "农业银行", "601288.SH",
+    "中国银行", "601988.SH",
+    "招商银行", "600036.SH",
+    "平安银行", "000001.SZ",
+    # 保险/券商
+    "中国平安", "601318.SH",
+    "中国人寿", "601628.SH",
+    "中信证券", "600030.SH",
+    "东方财富", "300059.SZ",
+    "海通证券", "600837.SH",
+    # 白酒/消费
+    "贵州茅台", "600519.SH",
+    "五粮液", "000858.SZ",
+    "泸州老窖", "000568.SZ",
+    "山西汾酒", "600809.SH",
+    "伊利股份", "600887.SH",
+    "海天味业", "603288.SH",
+    # 医药（非科技类）
+    "恒瑞医药", "600276.SH",
+    "迈瑞医疗", "300760.SZ",
+    "药明康德", "603259.SH",
+    "爱尔眼科", "300015.SZ",
+    # 传媒/教育
+    "分众传媒", "002027.SZ",
+    "中公教育", "002607.SZ",
+    # 传统基建/制造
+    "中国建筑", "601668.SH",
+    "中国中铁", "601390.SH",
+    "中国中车", "601766.SH",
+    "中国交建", "601800.SH",
+    "中国铁建", "601186.SH",
+    "中国电建", "601669.SH",
+    "三一重工", "600031.SH",
+    # 能源/资源
+    "中国石油", "601857.SH",
+    "中国石化", "600028.SH",
+    "中国神华", "601088.SH",
+    "陕西煤业", "601225.SH",
+}
 
 
 def load_config(path: str) -> dict:
+    """加载YAML配置（纯策略参数，不含认证信息）。"""
     if os.path.exists(path):
         with open(path, "r", encoding="utf-8") as f:
             cfg = yaml.safe_load(f) or {}
@@ -87,11 +160,20 @@ def load_config(path: str) -> dict:
 
 
 def get_env_token(name: str, required: bool = True) -> str:
+    """从环境变量读取Token，支持 GitHub Actions Secrets 注入。"""
     val = os.getenv(name, "").strip()
     if required and not val:
-        raise ValueError(f"环境变量 {name} 未设置。请在 GitHub Actions Secrets 中配置。")
+        raise ValueError(
+            f"环境变量 {name} 未设置。\n"
+            f"请在 GitHub Actions Secrets 中设置：Settings > Secrets and variables > Actions\n"
+            f"本地测试时: export {name}=your_value"
+        )
     return val
 
+
+# ============================================================================
+# Tushare 数据客户端
+# ============================================================================
 
 class TushareClient:
     API_INTERVAL = 0.3
@@ -160,13 +242,15 @@ class TushareClient:
         return df if df is not None else pd.DataFrame()
 
     def stock_basic(self, codes: list[str]):
-        all_df = self._call("stock_basic", exchange="", list_status="L", fields="ts_code,name,industry,float_share")
+        all_df = self._call("stock_basic", exchange="", list_status="L",
+                            fields="ts_code,name,industry,float_share")
         if all_df is None or all_df.empty:
             return pd.DataFrame()
         return all_df[all_df["ts_code"].isin(codes)].copy()
 
     def news(self, date: str):
-        return self._call("major_news", start_date=date, end_date=date, fields="title,content,datetime,src")
+        return self._call("major_news", start_date=date, end_date=date,
+                          fields="title,content,datetime,src")
 
     def current_period(self) -> str:
         now = datetime.now()
@@ -180,11 +264,13 @@ class TushareClient:
         return f"{y}0930"
 
     def hold_data(self, ts_code: str, name: str, period: str | None = None) -> dict:
-        res = {"ts_code": ts_code, "name": name, "chain": "",
-               "fund_hold": 0, "fund_ratio": 0, "inst_ratio": 0,
-               "total_ratio": 0, "float_share": 0,
-               "fund_ratio_prev": 0, "inst_ratio_prev": 0,
-               "report_period": period or "", "data_source": ""}
+        res = {
+            "ts_code": ts_code, "name": name, "chain": "",
+            "fund_hold": 0, "fund_ratio": 0, "inst_ratio": 0,
+            "total_ratio": 0, "float_share": 0,
+            "fund_ratio_prev": 0, "inst_ratio_prev": 0,
+            "report_period": period or "", "data_source": "",
+        }
         basic = self.stock_basic([ts_code])
         if not basic.empty and "float_share" in basic.columns:
             res["float_share"] = float(basic.iloc[0]["float_share"])
@@ -206,6 +292,10 @@ class TushareClient:
         res["total_ratio"] = res["fund_ratio"] + res["inst_ratio"]
         return res
 
+
+# ============================================================================
+# 候选池发现引擎
+# ============================================================================
 
 class DiscoveryEngine:
     POOL_FILE = "candidate_pool.json"
@@ -340,9 +430,13 @@ class DiscoveryEngine:
         candidates = []
         for s in scored:
             if s["score"] >= confirm_th:
+                # 黑名单过滤
+                if s["name"] in BLACKLIST or s["ts_code"] in BLACKLIST:
+                    logger.info(f"🚫 Blacklist filtered: {s['name']}({s['ts_code']}) — {s['chain']}")
+                    continue
                 s["status"] = "confirmed"
                 candidates.append(s)
-        logger.info(f"Signals: {len(all_signals)}, Unique: {len(scored)}, Confirmed: {len(candidates)}")
+        logger.info(f"Signals: {len(all_signals)}, Unique: {len(scored)}, Confirmed: {len(candidates)}, Blacklist filtered: {len(scored) - len(candidates)}")
         results = []
         for c in candidates:
             results.append({
@@ -380,6 +474,10 @@ class DiscoveryEngine:
         new = curr - prev_codes
         return [s for s in current if s["code"] in new]
 
+
+# ============================================================================
+# 增量抱团策略
+# ============================================================================
 
 class SupplyChainStrategy:
     def __init__(self, cfg: dict):
@@ -497,6 +595,10 @@ class SupplyChainStrategy:
         lines.append("=" * 65)
         return "\n".join(lines)
 
+
+# ============================================================================
+# Bark 推送
+# ============================================================================
 
 class BarkPusher:
     def __init__(self, key: str = "", server: str = "https://api.day.app"):
@@ -673,6 +775,7 @@ def main():
     parser.add_argument("--dry-run", action="store_true", help="试运行")
     args = parser.parse_args()
 
+    # 加载策略配置
     cfg = load_config(args.config)
     level = cfg.get("logging", {}).get("level", "INFO")
     logging.basicConfig(
@@ -681,6 +784,7 @@ def main():
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
+    # 从环境变量读取认证信息（GitHub Actions Secrets 注入）
     try:
         tushare_token = get_env_token("TUSHARE_TOKEN", required=not args.test_push)
     except ValueError as e:
@@ -689,6 +793,7 @@ def main():
     bark_key = get_env_token("BARK_KEY", required=False)
     bark_server = os.getenv("BARK_SERVER", "https://api.day.app").strip() or "https://api.day.app"
 
+    # 初始化
     client = TushareClient(tushare_token)
     strategy = SupplyChainStrategy(cfg)
     bark = BarkPusher(key=bark_key, server=bark_server)
