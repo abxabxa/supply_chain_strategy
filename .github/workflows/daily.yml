@@ -1,4 +1,4 @@
-name: Supply Chain Strategy
+name: supply_chain_strategy
 
 on:
   schedule:
