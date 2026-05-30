@@ -1,0 +1,74 @@
+# GitHub Actions —— 五大美股巨头A股供应链增量抱团策略
+# 定时运行：每日北京时间 21:30（UTC 13:30）
+
+name: Supply Chain Strategy
+
+on:
+  schedule:
+    - cron: '30 13 * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: '试运行模式（不推送）'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  strategy-run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      TUSHARE_TOKEN: ${{ secrets.TUSHARE_TOKEN }}
+      BARK_KEY: ${{ secrets.BARK_KEY }}
+      BARK_SERVER: ${{ secrets.BARK_SERVER || 'https://api.day.app' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install tushare requests pyyaml pandas numpy
+
+      - name: Run strategy
+        run: |
+          if [ "${{ github.event.inputs.dry_run }}" == "true" ]; then
+            python strategy.py config.yaml --dry-run
+          else
+            python strategy.py config.yaml
+          fi
+
+      - name: Save candidate pool
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if [ -f candidate_pool.json ]; then
+            git add candidate_pool.json
+            if ! git diff --cached --quiet; then
+              git commit -m "Auto: update candidate pool $(date -d '+8 hours' +%Y-%m-%d)"
+              git push
+            fi
+          fi
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: strategy-logs-${{ github.run_id }}
+          path: |
+            *.log
+            candidate_pool.json
+          retention-days: 15
