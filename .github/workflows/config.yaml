@@ -1,10 +1,8 @@
-# Supply Chain Strategy Config
-
-tushare_token: ""
-bark_key: ""
-bark_server: "https://api.day.app"
+# 五大美股巨头A股供应链 | 增量抱团策略 —— 纯策略参数配置
+# 本文件不含任何认证信息！TUSHARE_TOKEN / BARK_KEY 通过环境变量注入
 
 top_n: 10
+
 weights:
   fund_delta: 0.50
   inst_delta: 0.30
@@ -35,6 +33,14 @@ allocation:
   fund_8_to_15: 10
   fund_5_to_8: 8
   fund_lt_5: 6
+
+stop_loss:
+  single_stock: -25
+  portfolio: -15
+
+position_change:
+  halve: -3
+  clear: -5
 
 discovery:
   scan_days: 7
