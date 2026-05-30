@@ -27,35 +27,45 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}  # 确保有写权限
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: 'pip'                    # 依赖 requirements.txt 做缓存 key
+          cache: 'pip'
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt  # 从 requirements.txt 安装
+          pip install -r requirements.txt
 
       - name: Run strategy
-        run: |
-          if [ "${{ github.event.inputs.dry_run }}" == "true" ]; then
-            python strategy.py config.yaml --dry-run
-          else
-            python strategy.py config.yaml
-          fi
+        run: python strategy.py config.yaml ${{ github.event.inputs.dry_run == 'true' && '--dry-run' || '' }}
 
-      - name: Save candidate pool
+      - name: Check candidate pool exists
+        run: |
+          ls -la candidate_pool.json || echo "FILE NOT FOUND"
+          cat candidate_pool.json 2>/dev/null | head -5 || echo "FILE EMPTY OR MISSING"
+
+      - name: Commit and push candidate pool
         if: always()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          if [ -f candidate_pool.json ]; then
-            git add candidate_pool.json
-            if ! git diff --cached --quiet; then
-              git commit -m "Auto: update candidate pool $(date -d '+8 hours' +%Y-%m-%d)"
-              git push
-            fi
-          fi
+          git add candidate_pool.json
+          git diff --cached --quiet && echo "No changes to commit" || (
+            git commit -m "Auto: update candidate pool $(date -d '+8 hours' +%Y-%m-%d)"
+            git push
+          )
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: run-artifacts-${{ github.run_id }}
+          path: |
+            candidate_pool.json
+            *.log
+          retention-days: 15
