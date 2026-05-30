@@ -1,0 +1,24 @@
+strategy:
+  top_n: 10
+  weights:
+    fund_delta: 0.50
+    inst_delta: 0.30
+    base_hold: 0.10
+    small_cap_bonus: 0.10
+  crowding_thresholds:
+    safe: 70
+    warning: 80
+    danger: 90
+  stop_loss:
+    single_stock: -25
+    portfolio: -15
+  position_change:
+    halve: -3
+    clear: -5
+
+discovery:
+  scan_days: 7
+  thresholds:
+    confirm_direct: 0.8
+    confirm_indirect: 0.5
+    watching: 0.3
