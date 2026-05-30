@@ -1,4 +1,4 @@
-name: supply_chain_strategy
+name: Supply Chain Strategy
 
 on:
   schedule:
@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: '试运行模式（不推送）'
+        description: '试运行'
         required: false
         default: false
         type: boolean
@@ -27,8 +27,19 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}  # 确保有写权限
+
+      - name: DEBUG - 列出工作区所有文件
+        run: |
+          echo "=== 当前工作目录 ==="
+          pwd
+          echo "=== 根目录文件列表 ==="
+          ls -la
+          echo "=== 检查 strategy.py ==="
+          test -f strategy.py && echo "✅ strategy.py 存在" || echo "❌ strategy.py 不存在"
+          echo "=== 检查 config.yaml ==="
+          test -f config.yaml && echo "✅ config.yaml 存在" || echo "❌ config.yaml 不存在"
+          echo "=== 检查 requirements.txt ==="
+          test -f requirements.txt && echo "✅ requirements.txt 存在" || echo "❌ requirements.txt 不存在"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -42,30 +53,24 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run strategy
-        run: python strategy.py config.yaml ${{ github.event.inputs.dry_run == 'true' && '--dry-run' || '' }}
-
-      - name: Check candidate pool exists
         run: |
-          ls -la candidate_pool.json || echo "FILE NOT FOUND"
-          cat candidate_pool.json 2>/dev/null | head -5 || echo "FILE EMPTY OR MISSING"
+          if [ "${{ github.event.inputs.dry_run }}" == "true" ]; then
+            python strategy.py config.yaml --dry-run
+          else
+            python strategy.py config.yaml
+          fi
 
-      - name: Commit and push candidate pool
+      - name: Commit candidate pool
         if: always()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add candidate_pool.json
-          git diff --cached --quiet && echo "No changes to commit" || (
-            git commit -m "Auto: update candidate pool $(date -d '+8 hours' +%Y-%m-%d)"
-            git push
-          )
-
-      - name: Upload artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: run-artifacts-${{ github.run_id }}
-          path: |
-            candidate_pool.json
-            *.log
-          retention-days: 15
+          if [ -f candidate_pool.json ]; then
+            git add candidate_pool.json
+            git diff --cached --quiet && echo "No changes" || (
+              git commit -m "Auto: update pool $(date -d '+8 hours' +%Y-%m-%d)"
+              git push
+            )
+          else
+            echo "⚠️ candidate_pool.json not found"
+          fi
