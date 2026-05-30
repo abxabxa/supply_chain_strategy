@@ -6,7 +6,7 @@
 Tokens 从环境变量读取（GitHub Actions Secrets 注入）：
     - TUSHARE_TOKEN: Tushare Pro API Token
     - BARK_KEY:      Bark 推送设备 Key
-    - BARK_SERVER:   Bark 服务器地址（可选）
+    - BARK_SERVER:   Bark 服务器地址（可选，默认 https://api.day.app）
 
 运行:
     python strategy.py config.yaml              # 完整运行
@@ -89,11 +89,7 @@ def load_config(path: str) -> dict:
 def get_env_token(name: str, required: bool = True) -> str:
     val = os.getenv(name, "").strip()
     if required and not val:
-        raise ValueError(
-            f"环境变量 {name} 未设置。\n"
-            f"请在 GitHub Actions Secrets 中设置：Settings > Secrets and variables > Actions\n"
-            f"本地测试时: export {name}=your_value"
-        )
+        raise ValueError(f"环境变量 {name} 未设置。请在 GitHub Actions Secrets 中配置。")
     return val
 
 
@@ -120,7 +116,7 @@ class TushareClient:
                 if df is not None and not df.empty:
                     return df
                 return pd.DataFrame()
-n            except Exception as e:
+            except Exception as e:
                 msg = str(e)
                 if "积分" in msg or "permission" in msg.lower():
                     logger.error(f"{func}: permission denied ({msg})")
@@ -648,7 +644,6 @@ def pipeline(client: TushareClient, strategy: SupplyChainStrategy,
         logger.error(f"Strategy error: {e}")
         raise
     finally:
-        # 确保 candidate_pool.json 始终存在
         if not discovery.pool_path.exists():
             logger.info("Creating empty candidate_pool.json")
             discovery.save_pool([])
