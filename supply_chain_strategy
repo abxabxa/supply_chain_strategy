@@ -3,6 +3,11 @@
 五大美股巨头A股供应链 | 增量抱团策略
 全动态候选池 + 增量排名 + Bark推送
 
+Tokens 从环境变量读取（GitHub Actions Secrets 注入）：
+    - TUSHARE_TOKEN: Tushare Pro API Token
+    - BARK_KEY:      Bark 推送设备 Key
+    - BARK_SERVER:   Bark 服务器地址（可选）
+
 运行:
     python strategy.py config.yaml              # 完整运行
     python strategy.py config.yaml --test-push  # 测试推送
@@ -31,14 +36,15 @@ import tushare as ts
 logger = logging.getLogger("strategy")
 
 DEFAULT_CONFIG = {
-    "tushare_token": "", "bark_key": "", "bark_server": "https://api.day.app",
     "top_n": 10,
     "weights": {"fund_delta": 0.50, "inst_delta": 0.30, "base_hold": 0.10, "small_cap_bonus": 0.10},
     "crowding": {"safe": 70, "warning": 80, "danger": 90},
     "allocation": {"fund_gt_15": 12, "fund_8_to_15": 10, "fund_5_to_8": 8, "fund_lt_5": 6},
     "market_cap_bonus": {
-        "small": {"max_mv": 2.0, "bonus": 10.0}, "mid": {"max_mv": 5.0, "bonus": 5.0},
-        "mid_large": {"max_mv": 10.0, "bonus": 2.0}, "large": {"max_mv": 999999, "bonus": 0.0},
+        "small": {"max_mv": 2.0, "bonus": 10.0},
+        "mid": {"max_mv": 5.0, "bonus": 5.0},
+        "mid_large": {"max_mv": 10.0, "bonus": 2.0},
+        "large": {"max_mv": 999999, "bonus": 0.0},
     },
     "discovery": {"scan_days": 7, "thresholds": {"confirm": 0.5, "watching": 0.3}},
 }
@@ -65,7 +71,8 @@ INDIRECT_KWS = ["光模块", "光器件", "光芯片", "CPO", "硅光", "800G", 
     "人形机器人", "谐波减速器", "行星减速器", "滚珠丝杠", "空心杯电机", "无框力矩电机",
     "高速铜缆", "DAC", "高频铜箔"]
 
-NEGATIVE_KWS = ["未有合作", "没有供应", "否认", "澄清公告", "不实传闻", "终止合作", "取消订单", "退出供应链", "被移除"]
+NEGATIVE_KWS = ["未有合作", "没有供应", "否认", "澄清公告", "不实传闻",
+    "终止合作", "取消订单", "退出供应链", "被移除"]
 
 
 def load_config(path: str) -> dict:
@@ -76,10 +83,18 @@ def load_config(path: str) -> dict:
         cfg = {}
     merged = dict(DEFAULT_CONFIG)
     merged.update(cfg)
-    for key, env in [("tushare_token", "TUSHARE_TOKEN"), ("bark_key", "BARK_KEY"), ("bark_server", "BARK_SERVER")]:
-        if os.getenv(env):
-            merged[key] = os.getenv(env)
     return merged
+
+
+def get_env_token(name: str, required: bool = True) -> str:
+    val = os.getenv(name, "").strip()
+    if required and not val:
+        raise ValueError(
+            f"环境变量 {name} 未设置。\n"
+            f"请在 GitHub Actions Secrets 中设置：Settings > Secrets and variables > Actions\n"
+            f"本地测试时: export {name}=your_value"
+        )
+    return val
 
 
 class TushareClient:
@@ -88,7 +103,7 @@ class TushareClient:
     def __init__(self, token: str = ""):
         self.token = token
         if not self.token:
-            raise ValueError("tushare_token not found. Set TUSHARE_TOKEN env or in config.yaml.")
+            raise ValueError("TUSHARE_TOKEN not provided.")
         ts.set_token(self.token)
         self.pro = ts.pro_api()
         self._last_call = 0
@@ -105,7 +120,7 @@ class TushareClient:
                 if df is not None and not df.empty:
                     return df
                 return pd.DataFrame()
-            except Exception as e:
+n            except Exception as e:
                 msg = str(e)
                 if "积分" in msg or "permission" in msg.lower():
                     logger.error(f"{func}: permission denied ({msg})")
@@ -171,7 +186,8 @@ class TushareClient:
     def hold_data(self, ts_code: str, name: str, period: str | None = None) -> dict:
         res = {"ts_code": ts_code, "name": name, "chain": "",
                "fund_hold": 0, "fund_ratio": 0, "inst_ratio": 0,
-               "total_ratio": 0, "float_share": 0, "fund_ratio_prev": 0, "inst_ratio_prev": 0,
+               "total_ratio": 0, "float_share": 0,
+               "fund_ratio_prev": 0, "inst_ratio_prev": 0,
                "report_period": period or "", "data_source": ""}
         basic = self.stock_basic([ts_code])
         if not basic.empty and "float_share" in basic.columns:
@@ -487,9 +503,9 @@ class SupplyChainStrategy:
 
 
 class BarkPusher:
-    def __init__(self, cfg: dict):
-        self.key = cfg.get("bark_key", "")
-        self.server = cfg.get("bark_server", "https://api.day.app").rstrip("/")
+    def __init__(self, key: str = "", server: str = "https://api.day.app"):
+        self.key = key
+        self.server = server.rstrip("/")
 
     def push(self, title: str, body: str, level: str = "active", group: str = "strategy") -> bool:
         if not self.key:
@@ -548,7 +564,7 @@ class BarkPusher:
         return ok
 
 
-def fetch_delta(client: TushareClient, candidates: list[dict], cfg: dict) -> list[dict]:
+def fetch_delta(client: TushareClient, candidates: list[dict]) -> list[dict]:
     cur_p = client.current_period()
     year = int(cur_p[:4])
     md = cur_p[4:]
@@ -607,7 +623,7 @@ def pipeline(client: TushareClient, strategy: SupplyChainStrategy,
     if new_stocks and not dry and bark.key:
         bark.push_new(new_stocks)
 
-    hold_data = fetch_delta(client, pool, {})
+    hold_data = fetch_delta(client, pool)
     result = strategy.run(hold_data)
 
     report = result["report"]
@@ -636,9 +652,14 @@ def main():
   python strategy.py config.yaml              # 完整运行
   python strategy.py config.yaml --test-push  # 测试推送
   python strategy.py config.yaml --dry-run    # 试运行
+
+环境变量（GitHub Actions Secrets）:
+  TUSHARE_TOKEN  Tushare Pro API Token
+  BARK_KEY       Bark 推送设备 Key
+  BARK_SERVER    Bark 服务器地址（可选）
         """,
     )
-    parser.add_argument("config", nargs="?", default="config.yaml", help="配置文件路径")
+    parser.add_argument("config", nargs="?", default="config.yaml", help="策略配置文件路径")
     parser.add_argument("--test-push", action="store_true", help="测试Bark推送")
     parser.add_argument("--dry-run", action="store_true", help="试运行")
     args = parser.parse_args()
@@ -651,16 +672,23 @@ def main():
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
-    if not cfg.get("tushare_token") and not args.test_push:
-        print("❌ tushare_token not set!")
+    try:
+        tushare_token = get_env_token("TUSHARE_TOKEN", required=not args.test_push)
+    except ValueError as e:
+        print(f"❌ {e}")
         sys.exit(1)
+    bark_key = get_env_token("BARK_KEY", required=False)
+    bark_server = os.getenv("BARK_SERVER", "https://api.day.app").strip() or "https://api.day.app"
 
-    client = TushareClient(cfg["tushare_token"])
+    client = TushareClient(tushare_token)
     strategy = SupplyChainStrategy(cfg)
-    bark = BarkPusher(cfg)
+    bark = BarkPusher(key=bark_key, server=bark_server)
     discovery = DiscoveryEngine(client, cfg)
 
     if args.test_push:
+        if not bark_key:
+            print("❌ BARK_KEY not set!")
+            sys.exit(1)
         ok = bark.test()
         print("✅ Push test passed!" if ok else "❌ Push test failed!")
     else:
