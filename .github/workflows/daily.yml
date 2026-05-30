@@ -1,45 +1,28 @@
+# GitHub Actions - 五大美股巨头A股供应链策略
+# 全动态候选池 + 增量抱团排名 + Bark推送
+# 每日北京时间 21:30 自动运行
+
 name: Supply Chain Strategy
 
 on:
   schedule:
-    - cron: '30 13 * * *'
+    - cron: '30 13 * * *'  # UTC 13:30 = 北京时间 21:30
   workflow_dispatch:
     inputs:
       dry_run:
-        description: '试运行'
+        description: '试运行（不推送）'
         required: false
         default: false
         type: boolean
-
-permissions:
-  contents: write
 
 jobs:
   strategy-run:
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
-    env:
-      TUSHARE_TOKEN: ${{ secrets.TUSHARE_TOKEN }}
-      BARK_KEY: ${{ secrets.BARK_KEY }}
-      BARK_SERVER: ${{ secrets.BARK_SERVER || 'https://api.day.app' }}
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: DEBUG - 列出工作区所有文件
-        run: |
-          echo "=== 当前工作目录 ==="
-          pwd
-          echo "=== 根目录文件列表 ==="
-          ls -la
-          echo "=== 检查 strategy.py ==="
-          test -f strategy.py && echo "✅ strategy.py 存在" || echo "❌ strategy.py 不存在"
-          echo "=== 检查 config.yaml ==="
-          test -f config.yaml && echo "✅ config.yaml 存在" || echo "❌ config.yaml 不存在"
-          echo "=== 检查 requirements.txt ==="
-          test -f requirements.txt && echo "✅ requirements.txt 存在" || echo "❌ requirements.txt 不存在"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -52,25 +35,35 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run strategy
+      - name: Create .env
         run: |
-          if [ "${{ github.event.inputs.dry_run }}" == "true" ]; then
-            python strategy.py config.yaml --dry-run
-          else
-            python strategy.py config.yaml
-          fi
+          cat > .env << EOF
+          TUSHARE_TOKEN=${{ secrets.TUSHARE_TOKEN }}
+          BARK_KEY=${{ secrets.BARK_KEY }}
+          BARK_SERVER=${{ secrets.BARK_SERVER }}
+          LOG_LEVEL=INFO
+          EOF
 
-      - name: Commit candidate pool
+      - name: Run strategy
+        run: python src/main.py ${{ github.event.inputs.dry_run == 'true' && '--dry-run' || '' }}
+
+      - name: Save candidate pool changes
         if: always()
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
           if [ -f candidate_pool.json ]; then
             git add candidate_pool.json
-            git diff --cached --quiet && echo "No changes" || (
-              git commit -m "Auto: update pool $(date -d '+8 hours' +%Y-%m-%d)"
+            if ! git diff --cached --quiet; then
+              git commit -m "Auto: update candidate pool $(date -d '+8 hours' +%Y-%m-%d)"
               git push
-            )
-          else
-            echo "⚠️ candidate_pool.json not found"
+            fi
           fi
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-${{ github.run_id }}-${{ github.run_attempt }}
+          path: '*.log'
+          retention-days: 15
