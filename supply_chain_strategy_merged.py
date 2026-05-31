@@ -20,7 +20,6 @@ import os
 import re
 import sys
 import time
-import traceback
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
@@ -30,9 +29,9 @@ import requests
 import tushare as ts
 from dotenv import load_dotenv
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # 配置
-# ============================================================================
+# ---------------------------------------------------------------------------
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 logging.basicConfig(
@@ -41,7 +40,6 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger("supply_chain_strategy")
-
 
 # ============================================================================
 # 1. Tushare 数据客户端
@@ -59,7 +57,6 @@ class TushareClient:
         ts.set_token(self.token)
         self.pro = ts.pro_api()
         self._last_call_time = 0
-        self._token_valid = None
 
     def _safe_call(self, func_name: str, **kwargs):
         elapsed = time.time() - self._last_call_time
@@ -72,17 +69,12 @@ class TushareClient:
                 func = getattr(self.pro, func_name)
                 df = func(**kwargs)
                 if df is not None and not df.empty:
-                    self._token_valid = True
                     return df
                 return pd.DataFrame()
             except Exception as e:
                 msg = str(e)
-                if "token不对" in msg or "token" in msg.lower():
-                    self._token_valid = False
-                    logger.error(f"[{func_name}] Token invalid: {msg}")
-                    return None
                 if "积分" in msg or "permission" in msg.lower():
-                    logger.error(f"[{func_name}] Permission denied (need more points): {msg}")
+                    logger.error(f"[{func_name}] Permission denied: {msg}")
                     return None
                 if "freq" in msg.lower() or "limit" in msg.lower():
                     wait = 2 ** attempt
@@ -93,12 +85,6 @@ class TushareClient:
                 if attempt < 2:
                     time.sleep(1)
         return pd.DataFrame()
-
-    def is_token_valid(self) -> bool:
-        if self._token_valid is None:
-            df = self._safe_call("stock_basic", exchange="", list_status="L", limit=1)
-            self._token_valid = df is not None
-        return self._token_valid
 
     def get_fund_holdings(self, ts_code: str, report_period: Optional[str] = None) -> pd.DataFrame:
         params = {"ts_code": ts_code}
@@ -229,30 +215,6 @@ class DiscoveryEngine:
 
     POOL_FILE = "candidate_pool.json"
 
-    # 硬编码备选池：当公开API扫描不到时使用
-    FALLBACK_POOL = [
-        {"code": "300308.SZ", "name": "中际旭创", "chain": "英伟达-直接供应(光模块)"},
-        {"code": "300502.SZ", "name": "新易盛", "chain": "英伟达-直接供应(光模块)"},
-        {"code": "002463.SZ", "name": "沪电股份", "chain": "英伟达-直接供应(PCB)"},
-        {"code": "002475.SZ", "name": "立讯精密", "chain": "苹果-直接供应(代工)"},
-        {"code": "300433.SZ", "name": "蓝思科技", "chain": "苹果-直接供应(玻璃)"},
-        {"code": "601138.SH", "name": "工业富联", "chain": "英伟达-直接供应(服务器)"},
-        {"code": "002371.SZ", "name": "北方华创", "chain": "间接供应(半导体设备)"},
-        {"code": "300274.SZ", "name": "阳光电源", "chain": "间接供应(储能/电力)"},
-        {"code": "300124.SZ", "name": "汇川技术", "chain": "特斯拉-间接供应(电机)"},
-        {"code": "688012.SH", "name": "中微公司", "chain": "间接供应(刻蚀设备)"},
-        {"code": "002049.SZ", "name": "紫光国微", "chain": "间接供应(芯片)"},
-        {"code": "603501.SH", "name": "韦尔股份", "chain": "苹果-间接供应(CIS)"},
-        {"code": "688981.SH", "name": "中芯国际", "chain": "间接供应(晶圆代工)"},
-        {"code": "300394.SZ", "name": "天孚通信", "chain": "英伟达-直接供应(光器件)"},
-        {"code": "300014.SZ", "name": "亿纬锂能", "chain": "特斯拉-间接供应(电池)"},
-        {"code": "002594.SZ", "name": "比亚迪", "chain": "间接供应(汽车电子)"},
-        {"code": "300750.SZ", "name": "宁德时代", "chain": "特斯拉-间接供应(电池)"},
-        {"code": "688256.SH", "name": "寒武纪", "chain": "间接供应(AI芯片)"},
-        {"code": "600745.SH", "name": "闻泰科技", "chain": "间接供应(ODM)"},
-        {"code": "002156.SZ", "name": "通富微电", "chain": "AMD-间接供应(封测)"},
-    ]
-
     def __init__(self, tushare_client: Optional[TushareClient] = None):
         self.ts_client = tushare_client
         self.pool_path = Path.cwd() / self.POOL_FILE
@@ -314,100 +276,6 @@ class DiscoveryEngine:
             if len(name) >= 3 and name in text:
                 codes.add(code)
         return list(codes)
-
-    # =========================================================================
-    # 公开API扫描（东方财富，无需Tushare积分）
-    # =========================================================================
-
-    def scan_public_news(self, days: int = 3) -> List[Dict]:
-        """使用东方财富公开API扫描新闻"""
-        signals = []
-        all_stocks = self.get_all_stocks()
-        if not all_stocks:
-            return signals
-
-        search_kws = ["英伟达", "NVIDIA", "特斯拉", "苹果", "博通", "谷歌"]
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-
-        for keyword in search_kws:
-            try:
-                url = "https://searchapi.eastmoney.com/api/suggest/get"
-                params = {"input": keyword, "type": "20", "count": "50"}
-                resp = requests.get(url, params=params, timeout=15, headers=headers)
-                data = resp.json()
-                items = data.get("QuotationCodeTable", {}).get("Data", [])
-
-                for item in items:
-                    text = f"{item.get('Name', '')} {item.get('Code', '')}"
-                    score = self.score_text(text)
-                    if score["net_score"] > 0.3 and score["is_supply_chain"]:
-                        codes = self.extract_stock_from_text(text, all_stocks)
-                        for code in codes:
-                            signals.append({
-                                "ts_code": code,
-                                "name": all_stocks.get(code, ""),
-                                "title": text[:100],
-                                "source": "web:eastmoney",
-                                **score,
-                                "date": datetime.now().strftime("%Y-%m-%d"),
-                            })
-            except Exception:
-                continue
-        return signals
-
-    def scan_public_announcements(self, pages: int = 3) -> List[Dict]:
-        """使用东方财富公开公告接口扫描"""
-        signals = []
-        all_stocks = self.get_all_stocks()
-        if not all_stocks:
-            return signals
-
-        headers = {"User-Agent": "Mozilla/5.0"}
-
-        for page in range(1, pages + 1):
-            try:
-                url = "https://np-anotice-stock.eastmoney.com/api/security/ann"
-                params = {
-                    "sr": "-1",
-                    "page_size": "50",
-                    "page_index": str(page),
-                    "ann_type": "A",
-                    "client_source": "web",
-                    "f_node": "0",
-                    "s_node": "0",
-                }
-                resp = requests.get(url, params=params, timeout=15, headers=headers)
-                data = resp.json()
-                items = data.get("data", {}).get("list", [])
-
-                for item in items:
-                    title = item.get("title", "")
-                    score = self.score_text(title)
-                    if score["net_score"] > 0.3 and score["is_supply_chain"]:
-                        codes = item.get("codes", [])
-                        for code in codes:
-                            code_str = str(code)
-                            if len(code_str) == 6:
-                                ts_code = f"{code_str}.SH" if code_str.startswith(("60", "68", "51", "52")) else f"{code_str}.SZ"
-                            else:
-                                ts_code = code_str
-
-                            if ts_code in all_stocks:
-                                signals.append({
-                                    "ts_code": ts_code,
-                                    "name": all_stocks.get(ts_code, ""),
-                                    "title": title[:100],
-                                    "source": "ann:eastmoney",
-                                    **score,
-                                    "date": item.get("notice_date", datetime.now().strftime("%Y-%m-%d"))[:10],
-                                })
-            except Exception:
-                continue
-        return signals
-
-    # =========================================================================
-    # Tushare扫描（备用，积分足够时使用）
-    # =========================================================================
 
     def scan_news(self, days: int = 3) -> List[Dict]:
         signals = []
@@ -480,10 +348,6 @@ class DiscoveryEngine:
                     break
         return signals
 
-    # =========================================================================
-    # 数据处理
-    # =========================================================================
-
     def deduplicate_and_score(self, signals: List[Dict]) -> List[Dict]:
         stock_scores: Dict[str, Dict] = {}
 
@@ -551,9 +415,29 @@ class DiscoveryEngine:
                 s["status"] = "watching"
         return candidates
 
-    # =========================================================================
-    # 每日运行入口
-    # =========================================================================
+    # 硬编码备选池：当自动发现扫描不到时使用
+    FALLBACK_POOL = [
+        {"code": "300308.SZ", "name": "中际旭创", "chain": "英伟达-直接供应(光模块)"},
+        {"code": "300502.SZ", "name": "新易盛", "chain": "英伟达-直接供应(光模块)"},
+        {"code": "002463.SZ", "name": "沪电股份", "chain": "英伟达-直接供应(PCB)"},
+        {"code": "002475.SZ", "name": "立讯精密", "chain": "苹果-直接供应(代工)"},
+        {"code": "300433.SZ", "name": "蓝思科技", "chain": "苹果-直接供应(玻璃)"},
+        {"code": "601138.SH", "name": "工业富联", "chain": "英伟达-直接供应(服务器)"},
+        {"code": "002371.SZ", "name": "北方华创", "chain": "间接供应(半导体设备)"},
+        {"code": "300274.SZ", "name": "阳光电源", "chain": "间接供应(储能/电力)"},
+        {"code": "300124.SZ", "name": "汇川技术", "chain": "特斯拉-间接供应(电机)"},
+        {"code": "688012.SH", "name": "中微公司", "chain": "间接供应(刻蚀设备)"},
+        {"code": "002049.SZ", "name": "紫光国微", "chain": "间接供应(芯片)"},
+        {"code": "603501.SH", "name": "韦尔股份", "chain": "苹果-间接供应(CIS)"},
+        {"code": "688981.SH", "name": "中芯国际", "chain": "间接供应(晶圆代工)"},
+        {"code": "300394.SZ", "name": "天孚通信", "chain": "英伟达-直接供应(光器件)"},
+        {"code": "300014.SZ", "name": "亿纬锂能", "chain": "特斯拉-间接供应(电池)"},
+        {"code": "002594.SZ", "name": "比亚迪", "chain": "间接供应(汽车电子)"},
+        {"code": "300750.SZ", "name": "宁德时代", "chain": "特斯拉-间接供应(电池)"},
+        {"code": "688256.SH", "name": "寒武纪", "chain": "间接供应(AI芯片)"},
+        {"code": "600745.SH", "name": "闻泰科技", "chain": "间接供应(ODM)"},
+        {"code": "002156.SZ", "name": "通富微电", "chain": "AMD-间接供应(封测)"},
+    ]
 
     def run_daily_scan(self) -> List[Dict]:
         logger.info("=" * 60)
@@ -567,23 +451,15 @@ class DiscoveryEngine:
 
         all_signals = []
 
-        # 主要数据源：东方财富公开API（无需积分）
-        logger.info("Scanning public news (eastmoney)...")
-        news_signals = self.scan_public_news(days=3)
+        logger.info("Scanning news...")
+        news_signals = self.scan_news(days=7)
         all_signals.extend(news_signals)
-        logger.info(f"   Public news signals: {len(news_signals)}")
+        logger.info(f"   News signals: {len(news_signals)}")
 
-        logger.info("Scanning public announcements (eastmoney)...")
-        ann_signals = self.scan_public_announcements(pages=3)
+        logger.info("Scanning announcements...")
+        ann_signals = self.scan_announcements(days=3)
         all_signals.extend(ann_signals)
-        logger.info(f"   Public announcement signals: {len(ann_signals)}")
-
-        # 补充数据源：Tushare（如果积分充足）
-        if self.ts_client and self.ts_client.is_token_valid():
-            logger.info("Scanning Tushare news...")
-            tushare_news = self.scan_news(days=3)
-            all_signals.extend(tushare_news)
-            logger.info(f"   Tushare news signals: {len(tushare_news)}")
+        logger.info(f"   Announcement signals: {len(ann_signals)}")
 
         logger.info("Deduplicating and scoring...")
         scored = self.deduplicate_and_score(all_signals)
@@ -592,17 +468,19 @@ class DiscoveryEngine:
         candidates = self.filter_candidates(scored)
         logger.info(f"   Confirmed candidates (score>=0.5): {len(candidates)}")
 
-        # 如果公开API扫描为空，使用备选池兜底
+        # 如果自动发现为空，使用备选池兜底
         if not candidates:
             logger.warning("Discovery scan returned 0 candidates! Using fallback pool.")
             all_stocks = self.get_all_stocks()
             candidates = []
             for item in self.FALLBACK_POOL:
                 code = item["code"]
+                name = item["name"]
+                # 验证代码有效性（在A股列表中）
                 if code in all_stocks:
                     candidates.append({
                         "ts_code": code,
-                        "name": item["name"],
+                        "name": name,
                         "chain": item["chain"],
                         "score": 0.6,
                         "signal_count": 0,
@@ -765,9 +643,6 @@ class SupplyChainStrategy:
         return {"portfolio": portfolio, "report": report}
 
     def generate_report(self, portfolio: List[Dict]) -> str:
-        if not portfolio:
-            return "暂无数据\n\n可能原因：\n1. TUSHARE_TOKEN 无效或积分不足\n2. 当前非财报披露期，机构持仓数据未更新\n3. 发现引擎未扫描到匹配的供应链标的\n\n请检查：\n- Tushare token 是否正确 (https://tushare.pro/user/token)\n- 账号积分是否 >= 120\n- GitHub Secrets 中 TUSHARE_TOKEN 是否已更新"
-
         lines = []
         lines.append("=" * 65)
         lines.append("五大美股巨头A股供应链 | 增量抱团Top10")
@@ -811,10 +686,7 @@ class BarkPusher:
 
     def __init__(self, key: Optional[str] = None, server: Optional[str] = None):
         self.key = key or os.getenv("BARK_KEY", "")
-        server_env = os.getenv("BARK_SERVER", "")
-        self.server = (server or server_env or self.DEFAULT_SERVER).rstrip("/")
-        logger.info(f"Bark server: {self.server}")
-        logger.info(f"Bark configured: {bool(self.key)}")
+        self.server = (server or os.getenv("BARK_SERVER", self.DEFAULT_SERVER)).rstrip("/")
         if not self.key:
             logger.warning("BARK_KEY not found. Push disabled.")
 
@@ -907,22 +779,14 @@ class BarkPusher:
         title = f"新增{len(new_stocks)}只标的 | {today_str}"
         body_lines = [f"【候选池自动扩展】发现{len(new_stocks)}只新标的:\n"]
         for i, s in enumerate(new_stocks, 1):
-            body_lines.append(f"{i}. {s['name']}({s['ts_code']}) - {s['chain']} [置信度{s['score']:.2f}]")
+            # 兼容 code 和 ts_code 两种字段名
+            code = s.get("ts_code") or s.get("code", "")
+            body_lines.append(f"{i}. {s['name']}({code}) - {s['chain']} [置信度{s['score']:.2f}]")
         body_lines.append("\n以上标的已自动纳入候选池，将参与下次排名。")
 
         return self.push(title=title, body="\n".join(body_lines),
                          level="timeSensitive", sound="bell",
                          group="supply-chain-strategy")
-
-    def push_error(self, message: str) -> bool:
-        """推送错误提示"""
-        return self.push(
-            title="策略运行异常",
-            body=message,
-            level="timeSensitive",
-            sound="alarm",
-            group="supply-chain-strategy"
-        )
 
     def test_push(self) -> bool:
         return self.push(
@@ -1013,22 +877,6 @@ def run(tushare: TushareClient, strategy: SupplyChainStrategy,
     logger.info("SUPPLY CHAIN STRATEGY -- FULL RUN")
     logger.info("=" * 65)
 
-    # 检查 Tushare token 是否有效
-    if not tushare.is_token_valid():
-        error_msg = (
-            "TUSHARE_TOKEN 无效！\n\n"
-            "请按以下步骤检查：\n"
-            "1. 访问 https://tushare.pro/user/token 复制正确 token\n"
-            "2. 仓库 Settings -> Secrets -> Actions -> TUSHARE_TOKEN\n"
-            "3. 更新为正确的 token 后重新运行\n\n"
-            "注意：token 区分大小写，不要有多余空格"
-        )
-        logger.error("Tushare token invalid")
-        if not dry_run and bark.is_configured():
-            bark.push_error(error_msg)
-        print(error_msg)
-        return {"portfolio": [], "report": error_msg}
-
     # Step 1: 全A股扫描生成候选池
     logger.info("Step 1: Discovery -- Full A-Share Scan")
     previous_codes = {s["code"] for s in discovery.load_pool()}
@@ -1039,23 +887,6 @@ def run(tushare: TushareClient, strategy: SupplyChainStrategy,
 
     new_stocks = discovery.get_new_stocks(candidate_pool, previous_codes)
     logger.info(f"Candidate pool: {len(candidate_pool)} stocks ({len(new_stocks)} new)")
-
-    # 候选池为空时的处理
-    if not candidate_pool:
-        error_msg = (
-            "候选池为空，未找到五大巨头的A股供应链标的。\n\n"
-            "可能原因：\n"
-            "1. Tushare 新闻接口需要更高积分\n"
-            "2. 近期无相关新闻/公告\n"
-            "3. 扫描关键词需要调整\n\n"
-            "建议：\n"
-            "- 确认 Tushare 积分 >= 120\n"
-            "- 或等待市场热点出现时再运行"
-        )
-        if not dry_run and bark.is_configured():
-            bark.push_error(error_msg)
-        print(error_msg)
-        return {"portfolio": [], "report": error_msg}
 
     if new_stocks and not dry_run and bark.is_configured():
         logger.info(f"Pushing {len(new_stocks)} new stocks to Bark")
@@ -1130,9 +961,4 @@ def main():
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except Exception as e:
-        logger.error(f"FATAL: {e}")
-        traceback.print_exc()
-        sys.exit(1)
+    main()
