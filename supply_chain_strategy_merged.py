@@ -6,7 +6,8 @@
 运行方式:
     python supply_chain_strategy_merged.py              # 完整运行
     python supply_chain_strategy_merged.py --test-push  # 测试Bark推送
-    python supply_chain_strategy_merged.py --dry-run    # 试运行（不推送）
+    python supply_chain_strategy_merged.py --dry-run    # 试运行
+    python supply_chain_strategy_merged.py --diagnose   # 诊断300024
 
 环境变量（必填）:
     TUSHARE_TOKEN   Tushare Pro API Token
@@ -53,10 +54,11 @@ class TushareClient:
     FUND_TYPE_KWS = ("基金", "ETF")  # holder_type含这些 → 基金
     INST_TYPE_KWS = ("社保", "QFII", "保险", "券商", "信托", "银行理财", "企业年金", "外资")
     IGNORE_TYPE_KWS = ("一般法人", "个人")  # 这些不计入
+    # 北上资金通道（香港中央结算有限公司）→ 计入机构
+    NORTH_BOUND_KWS = ("香港中央结算", "香港结算")  # 北向资金通道
     # 高盛/摩根士丹利名称关键词
     GS_KEYWORDS = ("高盛", "高華", "Goldman", "GSIC", "GSIP")
     MS_KEYWORDS = ("摩根士丹利", "摩根史坦利", "大摩", "Morgan Stanley", "MORGAN STANLEY")
-    _diag_logged = False  # 只打印一次诊断日志
 
     def __init__(self, token: Optional[str] = None):
         self.token = token or os.getenv("TUSHARE_TOKEN", "")
@@ -146,13 +148,18 @@ class TushareClient:
         if df.empty:
             return result
 
-        # 首次运行打印诊断（确认holder_type实际格式）
-        if not TushareClient._diag_logged:
-            TushareClient._diag_logged = True
-            logger.info("=== DIAG: top10_floatholders raw sample ===")
-            for _, r in df.head(5).iterrows():
-                ht = r.get('holder_type', '')
-                logger.info(f"  name={r.get('holder_name','')} type='{ht}' float={r.get('hold_float_ratio',0)}")
+        # 诊断：300024(机器人)逐股东分类明细
+        if ts_code == "300024.SZ":
+            logger.info("=== DIAG 300024 逐股东分类 ===")
+            for _, r in df.iterrows():
+                hname = str(r.get('holder_name', ''))
+                htype = str(r.get('holder_type', '') or '')
+                hfloat = float(r.get('hold_float_ratio', 0) or 0)
+                is_f = any(kw in htype for kw in self.FUND_TYPE_KWS)
+                is_i = any(kw in htype for kw in self.INST_TYPE_KWS) or any(kw in hname for kw in self.NORTH_BOUND_KWS)
+                is_ig = any(kw in htype for kw in self.IGNORE_TYPE_KWS)
+                flag = "基金" if is_f else ("机构" if is_i else ("排除" if is_ig else "未知"))
+                logger.info(f"  {hname[:20]:20s} type={htype:15s} float={hfloat:5.2f}% → {flag}")
             logger.info("=== END DIAG ===")
 
         fund_ratio = inst_ratio = 0.0
@@ -182,6 +189,8 @@ class TushareClient:
                     is_fund = True
                 elif any(kw in hname for kw in ("社保", "QFII", "信托计划", "养老金")):
                     is_inst = True
+                elif any(kw in hname for kw in self.NORTH_BOUND_KWS):
+                    is_inst = True  # 北上资金计入机构
 
             if is_fund:
                 fund_ratio += hfloat; fund_count += 1
@@ -368,6 +377,7 @@ class DiscoveryEngine:
         return max(5.0, base + (_stable_hash(name, 8) - 4) / 10.0)
 
     def run_daily_scan(self) -> List[Dict]:
+        """双轨发现：新闻扫描 + 行业关键词过滤，合并去重，确保>=10只"""
         logger.info("=" * 60)
         logger.info("DiscoveryEngine: Daily Full A-Share Scan")
         logger.info("=" * 60)
@@ -377,37 +387,38 @@ class DiscoveryEngine:
             logger.error("Cannot get stock list, using cached pool")
             return self.load_pool()
 
-        # 新闻扫描（仅10个关键词x1天=10次API调用）
+        # 轨道1：新闻扫描
         logger.info("Scanning news...")
-        signals = self._scan_news(all_stocks)
-        logger.info(f"   News signals: {len(signals)}")
+        news_signals = self._scan_news(all_stocks)
+        logger.info(f"   News signals: {len(news_signals)}")
 
-        # 新闻为空则按行业关键词过滤全A股
-        if not signals:
-            logger.warning("News empty! Filtering by industry keywords...")
-            scored = []
-            for code, info in all_stocks.items():
-                score, matched, has_core = self._score_industry_match(info["name"], info["industry"])
-                if score > 0.15 and has_core:
-                    scored.append({"ts_code": code, "name": info["name"], "score": score, "matched": matched})
-            scored.sort(key=lambda x: x["score"], reverse=True)
-            for s in scored[:15]:
-                signals.append({
-                    "ts_code": s["ts_code"], "name": s["name"],
-                    "title": f"关键词: {','.join(s['matched'][:3])}",
-                    "source": "keyword_filter", "date": datetime.now().strftime("%Y-%m-%d"),
-                })
-            logger.info(f"   Keyword-filtered: {len(signals)}")
+        # 轨道2：行业关键词过滤（始终执行，不受新闻影响）
+        logger.info("Filtering by industry keywords...")
+        scored = []
+        for code, info in all_stocks.items():
+            score, matched, has_core = self._score_industry_match(info["name"], info["industry"])
+            if score > 0.15 and has_core:
+                scored.append({"ts_code": code, "name": info["name"], "score": score, "matched": matched})
+        scored.sort(key=lambda x: x["score"], reverse=True)
+        kw_signals = []
+        for s in scored[:15]:
+            kw_signals.append({
+                "ts_code": s["ts_code"], "name": s["name"],
+                "title": f"关键词: {','.join(s['matched'][:3])}",
+                "source": "keyword_filter", "date": datetime.now().strftime("%Y-%m-%d"),
+            })
+        logger.info(f"   Keyword-filtered: {len(kw_signals)}")
 
-        # 去重+生成候选池
-        best = {}
-        for sig in signals:
+        # 合并去重（新闻优先保留）
+        best: Dict[str, Dict] = {}
+        for sig in news_signals + kw_signals:
             code = sig["ts_code"]
             if not sig["name"]:
                 continue
             if code not in best:
                 best[code] = sig
 
+        # 取Top15
         candidates = []
         for code, sig in best.items():
             info = all_stocks.get(code, {})
@@ -427,38 +438,32 @@ class DiscoveryEngine:
 
         candidates.sort(key=lambda x: x["score"], reverse=True)
         candidates = candidates[:15]
-        logger.info(f"   Final candidates: {len(candidates)}")
+        logger.info(f"   Final candidates: {len(candidates)} (news={len(news_signals)}, kw={len(kw_signals)})")
         self.save_pool(candidates)
         return candidates
 
     def _scan_news(self, all_stocks: Dict) -> List[Dict]:
-        """新闻扫描：仅10关键词x1天"""
+        """新闻扫描：从当日重大新闻中匹配股票名称"""
         signals = []
         if self.ts_client is None:
             return signals
-        GIANT_KWS = {
-            "nvidia": ["英伟达", "NVIDIA"], "tesla": ["特斯拉", "Tesla"],
-            "apple": ["苹果", "Apple"], "broadcom": ["博通", "Broadcom"],
-            "google": ["谷歌", "Google"],
-        }
-        search_kws = [k for kws in GIANT_KWS.values() for k in kws]
         date = datetime.now().strftime("%Y%m%d")
-        for keyword in search_kws:
-            df = self.ts_client._safe_call("major_news", start_date=date, end_date=date,
-                                           fields="title,content,datetime,src")
-            if df is None or df.empty:
-                continue
-            for _, row in df.iterrows():
-                full = f"{row.get('title', '')} {row.get('content', '')}"
-                for code, info in all_stocks.items():
-                    if info["name"] in full:
-                        signals.append({
-                            "ts_code": code, "name": info["name"],
-                            "title": str(row.get("title", ""))[:100],
-                            "source": f"news:{row.get('src', '')}",
-                            "date": str(row.get("datetime", ""))[:10],
-                        })
-                        break
+        df = self.ts_client._safe_call("major_news", start_date=date, end_date=date,
+                                       fields="title,content,datetime,src")
+        if df is None or df.empty:
+            return signals
+        stock_name_map = {info["name"]: code for code, info in all_stocks.items() if len(info["name"]) >= 3}
+        for _, row in df.iterrows():
+            full = f"{row.get('title', '')} {row.get('content', '')}"
+            for name, code in stock_name_map.items():
+                if name in full:
+                    signals.append({
+                        "ts_code": code, "name": name,
+                        "title": str(row.get("title", ""))[:100],
+                        "source": f"news:{row.get('src', '')}",
+                        "date": str(row.get("datetime", ""))[:10],
+                    })
+                    break  # 一条新闻只匹配第一只
         return signals
 
     def load_pool(self) -> List[Dict]:
@@ -514,15 +519,14 @@ class SupplyChainStrategy:
         return score
 
     def rank(self, hold_data: List[Dict]) -> List[Dict]:
+        """只保留机构总持仓增量为正的股票，下降的一律过滤"""
         valid = []
         for item in hold_data:
-            if item.get("fund_ratio", 0) - item.get("fund_ratio_prev", 0) > 0:
+            fund_delta = item.get("fund_ratio", 0) - item.get("fund_ratio_prev", 0)
+            inst_delta = item.get("inst_ratio", 0) - item.get("inst_ratio_prev", 0)
+            total_delta = fund_delta + inst_delta
+            if total_delta > 0:  # 总持仓必须正增长
                 self.calc_score(item)
-                valid.append(item)
-        if not valid:
-            for item in hold_data:
-                item.update({"fund_delta": 0, "inst_delta": 0,
-                             "score": item.get("fund_ratio", 0) * 0.4 + item.get("inst_ratio", 0) * 0.3})
                 valid.append(item)
         valid.sort(key=lambda x: x["score"], reverse=True)
         return valid[:10]
@@ -554,7 +558,12 @@ class SupplyChainStrategy:
 
     def _generate_report(self, portfolio: List[Dict]) -> str:
         if not portfolio:
-            return "暂无数据\n\n请检查 Tushare token 及积分。"
+            return (f"增量抱团Top10 | {datetime.now().strftime('%m-%d %H:%M')}\n"
+                    "=" * 40 + "\n"
+                    "【今日无增量信号】\n\n"
+                    "候选池中所有股票机构总持仓均环比下降，\n"
+                    "无符合增量抱团条件的标的。\n\n"
+                    "建议：等待机构重新加仓信号。")
         lines = [f"增量抱团Top10 | {datetime.now().strftime('%m-%d %H:%M')}", "=" * 40]
         for i, p in enumerate(portfolio, 1):
             code = p.get('ts_code', p.get('code', ''))
@@ -784,6 +793,58 @@ def run(tushare: TushareClient, strategy: SupplyChainStrategy,
     return result
 
 
+def _diagnose_300024():
+    """300024逐股东诊断 -- 与主程序分类逻辑完全一致"""
+    token = os.getenv("TUSHARE_TOKEN", "")
+    if not token:
+        print("TUSHARE_TOKEN not set!"); sys.exit(1)
+    ts.set_token(token)
+    pro = ts.pro_api()
+
+    FUND_KWS = ("基金", "ETF")
+    INST_KWS = ("社保", "QFII", "保险", "券商", "信托", "银行理财", "企业年金", "外资")
+    IGNORE_KWS = ("一般法人", "个人")
+    NB_KWS = ("香港中央结算", "香港结算")
+
+    def _cl(hname, htype):
+        is_f = any(kw in htype for kw in FUND_KWS)
+        is_i = any(kw in htype for kw in INST_KWS)
+        is_ig = any(kw in htype for kw in IGNORE_KWS)
+        if not is_f and not is_i and not is_ig:
+            if any(kw in hname for kw in ("基金", "ETF", "联接")): is_f = True
+            elif any(kw in hname for kw in ("社保", "QFII", "信托计划", "养老金")): is_i = True
+            elif any(kw in hname for kw in NB_KWS): is_i = True
+        return "基金" if is_f else ("机构" if is_i else ("排除" if is_ig else "未知"))
+
+    print("=" * 70)
+    print("300024.SZ (机器人) 逐股东诊断")
+    print("=" * 70)
+    for period in ["20250331", "20241231"]:
+        print(f"\n{'─' * 70}\n报告期: {period}\n{'─' * 70}")
+        print(f"{'股东名称':<24} {'holder_type':<16} {'float%':>6} {'change':>8} {'分类':>6}")
+        print("-" * 70)
+        df = pro.top10_floatholders(ts_code="300024.SZ", end_date=period)
+        if df is None or df.empty:
+            print("  无数据"); continue
+        df = df.sort_values("end_date", ascending=False)
+        latest = df["end_date"].iloc[0]
+        df = df[df["end_date"] == latest].head(10)
+        ft, it = 0.0, 0.0
+        for _, r in df.iterrows():
+            hn, ht = str(r.get("holder_name", "")), str(r.get("holder_type", "") or "")
+            hf = float(r.get("hold_float_ratio", 0) or 0)
+            hc = float(r.get("hold_change", 0) or 0)
+            fl = _cl(hn, ht)
+            if fl == "基金": ft += hf
+            elif fl == "机构": it += hf
+            print(f"{hn:<24} {ht:<16} {hf:>6.2f} {hc:>+8.2f} {fl:>6}")
+        print("-" * 70)
+        print(f"{'合计':<42} 基金={ft:.2f}%  机构={it:.2f}%  总={ft+it:.2f}%")
+    print("\n" + "=" * 70)
+    print("F10对照: 2026/03/31 基金8.73% 北上1.35% | 2025/12/31 基金14.06% 北上0.96%")
+    print("=" * 70)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="五大美股巨头A股供应链 -- 全动态候选池增量抱团策略",
@@ -793,15 +854,21 @@ def main():
   python supply_chain_strategy_merged.py              # 完整运行
   python supply_chain_strategy_merged.py --test-push  # 测试Bark
   python supply_chain_strategy_merged.py --dry-run    # 试运行
+  python supply_chain_strategy_merged.py --diagnose   # 诊断300024
         """
     )
     parser.add_argument("--test-push", action="store_true", help="测试推送")
     parser.add_argument("--dry-run", action="store_true", help="试运行")
+    parser.add_argument("--diagnose", action="store_true", help="诊断300024逐股东分类")
     args = parser.parse_args()
 
     if not os.getenv("TUSHARE_TOKEN") and not args.test_push:
         print("TUSHARE_TOKEN not set!")
         sys.exit(1)
+
+    if args.diagnose:
+        _diagnose_300024()
+        sys.exit(0)
 
     try:
         tushare, strategy, bark, discovery = setup()
