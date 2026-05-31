@@ -329,43 +329,90 @@ class DiscoveryEngine:
                     break
         return signals
 
-    def scan_announcements(self, days: int = 3) -> List[Dict]:
+        def scan_public_news(self, days: int = 3) -> List[Dict]:
+        """使用东方财富公开API扫描新闻（无需Tushare积分）"""
         signals = []
-        if self.ts_client is None:
-            return signals
         all_stocks = self.get_all_stocks()
         if not all_stocks:
-            logger.error("Cannot get stock list for announcement scanning")
             return signals
-        search_kws = [k for kws in GIANT_KWS.values() for k in kws[:2]]
+
+        search_kws = ["英伟达", "NVIDIA", "特斯拉", "苹果", "博通", "谷歌"]
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
         for keyword in search_kws:
-            for d in range(min(days, 2)):
-                date = (datetime.now() - timedelta(days=d)).strftime("%Y%m%d")
-                try:
-                    df = self.ts_client.pro.major_news(
-                        start_date=date, end_date=date,
-                        fields="title,content,datetime,src"
-                    )
-                    if df is None or df.empty:
-                        continue
-                    for _, row in df.iterrows():
-                        title = str(row.get("title", ""))
-                        if keyword.lower() not in title.lower():
-                            continue
-                        score = self.score_text(title)
-                        if score["net_score"] > 0.2:
-                            company_name = title.split("：")[0].split(":")[0].strip()
-                            for code, name in all_stocks.items():
-                                if company_name == name or (len(company_name) >= 4 and company_name in name):
-                                    signals.append({
-                                        "ts_code": code, "name": name, "title": title[:100],
-                                        "source": "announcement", **score,
-                                        "date": str(row.get("datetime", ""))[:10],
-                                    })
-                                    break
-                except Exception:
-                    break
+            try:
+                url = "https://searchapi.eastmoney.com/api/suggest/get"
+                params = {"input": keyword, "type": "20", "count": "50"}
+                resp = requests.get(url, params=params, timeout=15, headers=headers)
+                data = resp.json()
+                items = data.get("QuotationCodeTable", {}).get("Data", [])
+
+                for item in items:
+                    text = f"{item.get('Name', '')} {item.get('Code', '')}"
+                    score = self.score_text(text)
+                    if score["net_score"] > 0.3 and score["is_supply_chain"]:
+                        codes = self.extract_stock_from_text(text, all_stocks)
+                        for code in codes:
+                            signals.append({
+                                "ts_code": code,
+                                "name": all_stocks.get(code, ""),
+                                "title": text[:100],
+                                "source": "web:eastmoney",
+                                **score,
+                                "date": datetime.now().strftime("%Y-%m-%d"),
+                            })
+            except Exception:
+                continue
+        return signals
+
+    def scan_public_announcements(self, pages: int = 3) -> List[Dict]:
+        """使用东方财富公开公告接口扫描（无需Tushare积分）"""
+        signals = []
+        all_stocks = self.get_all_stocks()
+        if not all_stocks:
+            return signals
+
+        headers = {"User-Agent": "Mozilla/5.0"}
+
+        for page in range(1, pages + 1):
+            try:
+                url = "https://np-anotice-stock.eastmoney.com/api/security/ann"
+                params = {
+                    "sr": "-1",
+                    "page_size": "50",
+                    "page_index": str(page),
+                    "ann_type": "A",
+                    "client_source": "web",
+                    "f_node": "0",
+                    "s_node": "0",
+                }
+                resp = requests.get(url, params=params, timeout=15, headers=headers)
+                data = resp.json()
+                items = data.get("data", {}).get("list", [])
+
+                for item in items:
+                    title = item.get("title", "")
+                    score = self.score_text(title)
+                    if score["net_score"] > 0.3 and score["is_supply_chain"]:
+                        codes = item.get("codes", [])
+                        for code in codes:
+                            code_str = str(code)
+                            if len(code_str) == 6:
+                                ts_code = f"{code_str}.SH" if code_str.startswith(("60", "68", "51", "52")) else f"{code_str}.SZ"
+                            else:
+                                ts_code = code_str
+
+                            if ts_code in all_stocks:
+                                signals.append({
+                                    "ts_code": ts_code,
+                                    "name": all_stocks.get(ts_code, ""),
+                                    "title": title[:100],
+                                    "source": "ann:eastmoney",
+                                    **score,
+                                    "date": item.get("notice_date", datetime.now().strftime("%Y-%m-%d"))[:10],
+                                })
+            except Exception:
+                continue
         return signals
 
     def deduplicate_and_score(self, signals: List[Dict]) -> List[Dict]:
