@@ -90,16 +90,17 @@ class TushareClient:
         params = {"ts_code": ts_code}
         if report_period:
             params["end_date"] = report_period
-        df = self._safe_call("report_fund_hold", **params)
-        if df is None:
-            return pd.DataFrame()
-        if not df.empty:
-            for col in ["fund_hold", "fund_ratio"]:
-                if col in df.columns:
-                    df[col] = pd.to_numeric(df[col], errors="coerce")
-            if "end_date" in df.columns:
-                df = df.sort_values("end_date", ascending=False)
-        return df
+        # 尝试两个接口名
+        for api_name in ["report_fund_hold", "fund_portfolio"]:
+            df = self._safe_call(api_name, **params)
+            if df is not None and not df.empty:
+                for col in ["fund_hold", "fund_ratio"]:
+                    if col in df.columns:
+                        df[col] = pd.to_numeric(df[col], errors="coerce")
+                if "end_date" in df.columns:
+                    df = df.sort_values("end_date", ascending=False)
+                return df
+        return pd.DataFrame()
 
     def get_top10_floatholders(self, ts_code: str, report_period: Optional[str] = None) -> pd.DataFrame:
         params = {"ts_code": ts_code}
@@ -644,35 +645,27 @@ class SupplyChainStrategy:
 
     def generate_report(self, portfolio: List[Dict]) -> str:
         lines = []
-        lines.append("=" * 65)
-        lines.append("五大美股巨头A股供应链 | 增量抱团Top10")
-        lines.append(f"时间: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
-        lines.append("=" * 65)
-        lines.append("")
+        lines.append(f"五大美股巨头供应链 | {datetime.now().strftime('%m-%d %H:%M')}")
+        lines.append("=" * 40)
 
-        for i, p in enumerate(portfolio, 1):
+        for i, p in enumerate(portfolio[:10], 1):
+            code = p.get('ts_code', p.get('code', ''))
             lines.append(
-                f"{i:2d}. {p['crowding_emoji']} [{p['group']}] "
-                f"{p['name']}({p['ts_code']})\n"
-                f"    链: {p.get('chain', 'N/A')} | "
-                f"基金{p.get('fund_ratio', 0):.1f}%({p.get('fund_ratio_prev', 0):.1f}%) "
-                f"+{p.get('fund_delta', 0):.1f}% | "
-                f"机构{p.get('inst_ratio', 0):.1f}% | "
-                f"合计{p.get('total_ratio', 0):.1f}% | "
-                f"仓位{p['weight']}%"
+                f"{i}. {p['name']}({code})\n"
+                f"   {p.get('chain', 'N/A')[:12]}\n"
+                f"   基金{p.get('fund_ratio', 0):.1f}%({p.get('fund_ratio_prev', 0):.1f}%) "
+                f"+{p.get('fund_delta', 0):.1f}% | 仓位{p['weight']}%"
             )
 
-        a_count = sum(1 for p in portfolio if p["group"] == "A")
-        b_count = sum(1 for p in portfolio if p["group"] == "B")
-        c_count = sum(1 for p in portfolio if p["group"] == "C")
-        avg_delta = sum(p.get("fund_delta", 0) for p in portfolio) / max(len(portfolio), 1)
+        if len(portfolio) > 0:
+            avg_delta = sum(p.get("fund_delta", 0) for p in portfolio) / len(portfolio)
+            lines.append(f"--\n平均基金增量: +{avg_delta:.1f}%")
 
-        lines.append("")
-        lines.append(f"A组(核心加仓): {a_count}只 | B组(持续加仓): {b_count}只 | C组(观察): {c_count}只")
-        lines.append(f"平均基金增量: +{avg_delta:.1f}%")
-        lines.append("=" * 65)
-
-        return "\n".join(lines)
+        report = "\n".join(lines)
+        # 限制长度避免推送失败
+        if len(report) > 3000:
+            report = report[:3000] + "\n...(已截断)"
+        return report
 
 
 # ============================================================================
@@ -700,15 +693,23 @@ class BarkPusher:
             logger.info(f"Bark not configured. Would push: [{title}] {body[:50]}...")
             return False
 
-        url = f"{self.server}/{self.key}/{requests.utils.quote(title)}/{requests.utils.quote(body)}"
-        params = {}
-        if level:     params["level"] = level
-        if badge is not None: params["badge"] = badge
-        if sound:     params["sound"] = sound
-        if group:     params["group"] = group
+        # 使用 POST 避免 URL 过长
+        url = f"{self.server}/push"
+        payload = {
+            "device_key": self.key,
+            "title": title,
+            "body": body,
+            "level": level,
+        }
+        if badge is not None:
+            payload["badge"] = badge
+        if sound:
+            payload["sound"] = sound
+        if group:
+            payload["group"] = group
 
         try:
-            resp = requests.get(url, params=params, timeout=10)
+            resp = requests.post(url, json=payload, timeout=10)
             result = resp.json()
             if result.get("code") == 200:
                 logger.info(f"Push sent: {title}")
@@ -724,11 +725,12 @@ class BarkPusher:
         today_str = datetime.now().strftime("%m-%d")
         title = f"增量抱团策略 | {today_str} | {'调仓' if is_adjust_window else '监控'}"
 
-        max_len = 3800
-        segments = []
+        # 限制单段长度
+        max_len = 3000
         if len(report_text) <= max_len:
             segments = [report_text]
         else:
+            segments = []
             lines = report_text.split("\n")
             current = ""
             for line in lines:
@@ -740,13 +742,11 @@ class BarkPusher:
             if current:
                 segments.append(current)
 
-        self.push(title=title, body=segments[0],
-                  level="timeSensitive" if is_adjust_window else "active",
-                  group="supply-chain-strategy")
-
-        for i, segment in enumerate(segments[1:], 2):
-            self.push(title=f"{title} (续{i})", body=segment,
-                      level="active", group="supply-chain-strategy")
+        for i, segment in enumerate(segments, 1):
+            seg_title = title if i == 1 else f"{title} (续{i})"
+            self.push(title=seg_title, body=segment,
+                      level="timeSensitive" if is_adjust_window else "active",
+                      group="supply-chain-strategy")
 
         logger.info(f"Strategy report pushed in {len(segments)} segment(s)")
 
