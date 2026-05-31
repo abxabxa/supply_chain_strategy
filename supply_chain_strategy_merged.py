@@ -20,6 +20,7 @@ import os
 import re
 import sys
 import time
+import traceback
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
@@ -635,11 +636,13 @@ class BarkPusher:
 
     DEFAULT_SERVER = "https://api.day.app"
 
-        def __init__(self, key: Optional[str] = None, server: Optional[str] = None):
+    def __init__(self, key: Optional[str] = None, server: Optional[str] = None):
         self.key = key or os.getenv("BARK_KEY", "")
         # 修复：如果 BARK_SERVER 是空字符串，也用默认地址
         server_env = os.getenv("BARK_SERVER", "")
         self.server = (server or server_env or self.DEFAULT_SERVER).rstrip("/")
+        logger.info(f"Bark server: {self.server}")
+        logger.info(f"Bark configured: {bool(self.key)}")
         if not self.key:
             logger.warning("BARK_KEY not found. Push disabled.")
 
@@ -820,12 +823,12 @@ def fetch_delta_data(tushare: TushareClient, candidates: List[Dict]) -> List[Dic
             })
     return results
 
-def run(tushare, strategy, bark, discovery, dry_run=False):
-    # ===== 临时调试：先推送一条测试消息 =====
-    if not dry_run and bark.is_configured():
-        bark.push(title="调试", body="策略开始运行...", group="supply-chain-strategy")
-    # ===== 调试结束，确认收到后删除上面3行 =====
-    
+
+def run(tushare: TushareClient, strategy: SupplyChainStrategy,
+        bark: BarkPusher, discovery: DiscoveryEngine, dry_run: bool = False):
+    """完整运行流程：扫描 -> 获取增量数据 -> 排名 -> 推送"""
+    logger.info("=" * 65)
+    logger.info("SUPPLY CHAIN STRATEGY -- FULL RUN")
     logger.info("=" * 65)
 
     # Step 1: 全A股扫描生成候选池
@@ -912,4 +915,9 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        logger.error(f"FATAL: {e}")
+        traceback.print_exc()
+        sys.exit(1)
