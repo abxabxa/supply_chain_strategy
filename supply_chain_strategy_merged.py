@@ -49,12 +49,14 @@ class TushareClient:
     """Tushare Pro API 封装 -- 基于 top10_floatholders 获取真实机构持仓"""
 
     API_INTERVAL = 0.3
-    FUND_TYPES = {"基金", "证券投资基金", "公募基金", "私募基金"}
-    INST_TYPES = {"社保基金", "QFII", "保险", "券商", "信托", "银行理财", "企业年金",
-                  "保险资金", "社保", "外资", "合格境外机构投资者"}
+    # holder_type 中文分类关键词（Tushare返回中文如"开放式投资基金"）
+    FUND_TYPE_KWS = ("基金", "ETF")  # holder_type含这些 → 基金
+    INST_TYPE_KWS = ("社保", "QFII", "保险", "券商", "信托", "银行理财", "企业年金", "外资")
+    IGNORE_TYPE_KWS = ("一般法人", "个人")  # 这些不计入
     # 高盛/摩根士丹利名称关键词
     GS_KEYWORDS = ("高盛", "高華", "Goldman", "GSIC", "GSIP")
     MS_KEYWORDS = ("摩根士丹利", "摩根史坦利", "大摩", "Morgan Stanley", "MORGAN STANLEY")
+    _diag_logged = False  # 只打印一次诊断日志
 
     def __init__(self, token: Optional[str] = None):
         self.token = token or os.getenv("TUSHARE_TOKEN", "")
@@ -131,7 +133,7 @@ class TushareClient:
 
     def get_stock_hold_data(self, ts_code: str, stock_name: str,
                             report_period: Optional[str] = None) -> Dict:
-        """从top10_floatholders获取真实持仓：fund_ratio + inst_ratio = total_ratio"""
+        """从top10_floatholders获取真实持仓 -- 保守分类：未知类型不计入"""
         result = {
             "ts_code": ts_code, "name": stock_name,
             "fund_ratio": 0, "inst_ratio": 0, "total_ratio": 0,
@@ -144,34 +146,47 @@ class TushareClient:
         if df.empty:
             return result
 
+        # 首次运行打印诊断（确认holder_type实际格式）
+        if not TushareClient._diag_logged:
+            TushareClient._diag_logged = True
+            logger.info("=== DIAG: top10_floatholders raw sample ===")
+            for _, r in df.head(5).iterrows():
+                ht = r.get('holder_type', '')
+                logger.info(f"  name={r.get('holder_name','')} type='{ht}' float={r.get('hold_float_ratio',0)}")
+            logger.info("=== END DIAG ===")
+
         fund_ratio = inst_ratio = 0.0
         fund_count = inst_count = 0
         gs_flag = ms_flag = False
+
         for _, row in df.iterrows():
-            htype = str(row.get("holder_type", "")).strip()
+            hname = str(row.get("holder_name", "")).strip()
+            htype = str(row.get("holder_type", "") or "").strip()  # 中文分类如"开放式投资基金"
             hfloat = float(row.get("hold_float_ratio", 0) or 0)
             hchange = float(row.get("hold_change", 0) or 0)
-            hname = str(row.get("holder_name", ""))
 
-            # 检测高盛/摩根士丹利增持 (hold_change > 0)
+            # 高盛/摩根士丹利增持检测
             if not gs_flag and any(k in hname for k in self.GS_KEYWORDS) and hchange > 0:
                 gs_flag = True
             if not ms_flag and any(k in hname for k in self.MS_KEYWORDS) and hchange > 0:
                 ms_flag = True
 
-            if htype in self.FUND_TYPES:
-                fund_ratio += hfloat
-                fund_count += 1
-            elif htype in self.INST_TYPES:
-                inst_ratio += hfloat
-                inst_count += 1
-            else:
-                if "基金" in hname:
-                    fund_ratio += hfloat
-                    fund_count += 1
-                elif any(k in hname for k in ("社保", "保险", "QFII", "信托", "券商", "外资", "年金")):
-                    inst_ratio += hfloat
-                    inst_count += 1
+            # 分类：holder_type中文关键词匹配；未知默认不计入
+            is_fund = any(kw in htype for kw in self.FUND_TYPE_KWS)
+            is_inst = any(kw in htype for kw in self.INST_TYPE_KWS)
+            is_ignore = any(kw in htype for kw in self.IGNORE_TYPE_KWS)
+
+            if not is_fund and not is_inst and not is_ignore:
+                # holder_type完全未知：用holder_name保守匹配
+                if any(kw in hname for kw in ("基金", "ETF", "联接")):
+                    is_fund = True
+                elif any(kw in hname for kw in ("社保", "QFII", "信托计划", "养老金")):
+                    is_inst = True
+
+            if is_fund:
+                fund_ratio += hfloat; fund_count += 1
+            elif is_inst:
+                inst_ratio += hfloat; inst_count += 1
 
         result.update({
             "fund_ratio": round(fund_ratio, 2), "inst_ratio": round(inst_ratio, 2),
@@ -180,9 +195,9 @@ class TushareClient:
             "gs_increased": gs_flag, "ms_increased": ms_flag,
             "data_source": "top10_floatholders",
         })
-        gs_tag = " [GS+摩根]" if gs_flag or ms_flag else ""
+        tag = " [GS+摩根]" if gs_flag or ms_flag else ""
         logger.info(f"  {stock_name}: 基金{fund_count}家 {fund_ratio:.1f}% | "
-                    f"机构{inst_count}家 {inst_ratio:.1f}% | 合计{result['total_ratio']:.1f}%{gs_tag}")
+                    f"机构{inst_count}家 {inst_ratio:.1f}% | 合计{result['total_ratio']:.1f}%{tag}")
         return result
 
     def get_current_report_period(self) -> str:
