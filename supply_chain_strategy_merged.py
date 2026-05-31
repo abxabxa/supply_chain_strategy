@@ -347,7 +347,7 @@ class DiscoveryEngine:
             logger.error("Cannot get stock list, using cached pool")
             return self.load_pool()
 
-        # 新闻扫描（仅10关键词x1天=10次API调用）
+        # 新闻扫描（仅10个关键词x1天=10次API调用）
         logger.info("Scanning news...")
         signals = self._scan_news(all_stocks)
         logger.info(f"   News signals: {len(signals)}")
@@ -373,7 +373,9 @@ class DiscoveryEngine:
         best = {}
         for sig in signals:
             code = sig["ts_code"]
-            if sig["name"] and code not in best:
+            if not sig["name"]:
+                continue
+            if code not in best:
                 best[code] = sig
 
         candidates = []
@@ -434,7 +436,8 @@ class DiscoveryEngine:
             return []
         try:
             with open(self.pool_path, "r", encoding="utf-8") as f:
-                return [s for s in json.load(f).get("stocks", []) if s.get("status") == "confirmed"]
+                data = json.load(f)
+            return [s for s in data.get("stocks", []) if s.get("status") == "confirmed"]
         except Exception:
             return []
 
@@ -510,7 +513,7 @@ class SupplyChainStrategy:
                 "crowding_emoji": {"safe": "🟢", "warning": "🟡", "danger": "🟠", "extreme": "🔴"}.get(cr, "⚪"),
                 "group": "A" if item.get("fund_delta", 0) >= 5 and cr in ("safe", "warning")
                 else ("B" if item.get("fund_delta", 0) >= 2 else "C"),
-                "weight": {15: 12, 8: 10, 5: 8}.get(next((t for t in (15, 8, 5) if item.get("fund_ratio", 0) >= t)), 6),
+                "weight": {15: 12, 8: 10, 5: 8}.get(next((t for t in (15, 8, 5) if item.get("fund_ratio", 0) >= t), None), 6),
             })
             portfolio.append(p)
         return portfolio
