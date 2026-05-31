@@ -495,7 +495,7 @@ class DiscoveryEngine:
         all_signals = []
 
         logger.info("Scanning news...")
-        news_signals = self.scan_news(days=7)
+        news_signals = self.scan_news(days=3)
         all_signals.extend(news_signals)
         logger.info(f"   News signals: {len(news_signals)}")
 
