@@ -35,7 +35,6 @@ jobs:
         env:
           TUSHARE_TOKEN: ${{ secrets.TUSHARE_TOKEN }}
           BARK_KEY: ${{ secrets.BARK_KEY }}
-          BARK_SERVER: ${{ secrets.BARK_SERVER }}
           LOG_LEVEL: INFO
         run: python supply_chain_strategy_merged.py ${{ github.event.inputs.dry_run == 'true' && '--dry-run' || '' }}
 
