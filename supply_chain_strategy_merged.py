@@ -59,6 +59,7 @@ class TushareClient:
         ts.set_token(self.token)
         self.pro = ts.pro_api()
         self._last_call_time = 0
+        self._token_valid = None
 
     def _safe_call(self, func_name: str, **kwargs):
         elapsed = time.time() - self._last_call_time
@@ -71,12 +72,17 @@ class TushareClient:
                 func = getattr(self.pro, func_name)
                 df = func(**kwargs)
                 if df is not None and not df.empty:
+                    self._token_valid = True
                     return df
                 return pd.DataFrame()
             except Exception as e:
                 msg = str(e)
+                if "token不对" in msg or "token" in msg.lower():
+                    self._token_valid = False
+                    logger.error(f"[{func_name}] Token invalid: {msg}")
+                    return None
                 if "积分" in msg or "permission" in msg.lower():
-                    logger.error(f"[{func_name}] Permission denied: {msg}")
+                    logger.error(f"[{func_name}] Permission denied (need more points): {msg}")
                     return None
                 if "freq" in msg.lower() or "limit" in msg.lower():
                     wait = 2 ** attempt
@@ -87,6 +93,12 @@ class TushareClient:
                 if attempt < 2:
                     time.sleep(1)
         return pd.DataFrame()
+
+    def is_token_valid(self) -> bool:
+        if self._token_valid is None:
+            df = self._safe_call("stock_basic", exchange="", list_status="L", limit=1)
+            self._token_valid = df is not None
+        return self._token_valid
 
     def get_fund_holdings(self, ts_code: str, report_period: Optional[str] = None) -> pd.DataFrame:
         params = {"ts_code": ts_code}
@@ -284,6 +296,9 @@ class DiscoveryEngine:
         if self.ts_client is None:
             return signals
         all_stocks = self.get_all_stocks()
+        if not all_stocks:
+            logger.error("Cannot get stock list for news scanning")
+            return signals
         search_kws = [k for kws in GIANT_KWS.values() for k in kws[:3]]
 
         for keyword in search_kws:
@@ -319,6 +334,9 @@ class DiscoveryEngine:
         if self.ts_client is None:
             return signals
         all_stocks = self.get_all_stocks()
+        if not all_stocks:
+            logger.error("Cannot get stock list for announcement scanning")
+            return signals
         search_kws = [k for kws in GIANT_KWS.values() for k in kws[:2]]
 
         for keyword in search_kws:
@@ -595,6 +613,9 @@ class SupplyChainStrategy:
         return {"portfolio": portfolio, "report": report}
 
     def generate_report(self, portfolio: List[Dict]) -> str:
+        if not portfolio:
+            return "暂无数据\n\n可能原因：\n1. TUSHARE_TOKEN 无效或积分不足\n2. 当前非财报披露期，机构持仓数据未更新\n3. 发现引擎未扫描到匹配的供应链标的\n\n请检查：\n- Tushare token 是否正确 (https://tushare.pro/user/token)\n- 账号积分是否 >= 120\n- GitHub Secrets 中 TUSHARE_TOKEN 是否已更新"
+
         lines = []
         lines.append("=" * 65)
         lines.append("五大美股巨头A股供应链 | 增量抱团Top10")
@@ -742,6 +763,16 @@ class BarkPusher:
                          level="timeSensitive", sound="bell",
                          group="supply-chain-strategy")
 
+    def push_error(self, message: str) -> bool:
+        """推送错误提示"""
+        return self.push(
+            title="策略运行异常",
+            body=message,
+            level="timeSensitive",
+            sound="alarm",
+            group="supply-chain-strategy"
+        )
+
     def test_push(self) -> bool:
         return self.push(
             title="策略推送测试",
@@ -831,6 +862,22 @@ def run(tushare: TushareClient, strategy: SupplyChainStrategy,
     logger.info("SUPPLY CHAIN STRATEGY -- FULL RUN")
     logger.info("=" * 65)
 
+    # 检查 Tushare token 是否有效
+    if not tushare.is_token_valid():
+        error_msg = (
+            "TUSHARE_TOKEN 无效！\n\n"
+            "请按以下步骤检查：\n"
+            "1. 访问 https://tushare.pro/user/token 复制正确 token\n"
+            "2. 仓库 Settings -> Secrets -> Actions -> TUSHARE_TOKEN\n"
+            "3. 更新为正确的 token 后重新运行\n\n"
+            "注意：token 区分大小写，不要有多余空格"
+        )
+        logger.error("Tushare token invalid")
+        if not dry_run and bark.is_configured():
+            bark.push_error(error_msg)
+        print(error_msg)
+        return {"portfolio": [], "report": error_msg}
+
     # Step 1: 全A股扫描生成候选池
     logger.info("Step 1: Discovery -- Full A-Share Scan")
     previous_codes = {s["code"] for s in discovery.load_pool()}
@@ -841,6 +888,23 @@ def run(tushare: TushareClient, strategy: SupplyChainStrategy,
 
     new_stocks = discovery.get_new_stocks(candidate_pool, previous_codes)
     logger.info(f"Candidate pool: {len(candidate_pool)} stocks ({len(new_stocks)} new)")
+
+    # 候选池为空时的处理
+    if not candidate_pool:
+        error_msg = (
+            "候选池为空，未找到五大巨头的A股供应链标的。\n\n"
+            "可能原因：\n"
+            "1. Tushare 新闻接口需要更高积分\n"
+            "2. 近期无相关新闻/公告\n"
+            "3. 扫描关键词需要调整\n\n"
+            "建议：\n"
+            "- 确认 Tushare 积分 >= 120\n"
+            "- 或等待市场热点出现时再运行"
+        )
+        if not dry_run and bark.is_configured():
+            bark.push_error(error_msg)
+        print(error_msg)
+        return {"portfolio": [], "report": error_msg}
 
     if new_stocks and not dry_run and bark.is_configured():
         logger.info(f"Pushing {len(new_stocks)} new stocks to Bark")
