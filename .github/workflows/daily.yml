@@ -2,7 +2,7 @@ name: Supply Chain Strategy
 
 on:
   schedule:
-    - cron: '30 13 * * *'  # UTC 13:30 = 北京时间 21:30
+    - cron: '30 13 * * *'
   workflow_dispatch:
     inputs:
       dry_run:
@@ -29,7 +29,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install tushare requests pandas python-dotenv
+          pip install -r requirements.txt
 
       - name: Create .env
         run: |
@@ -55,11 +55,3 @@ jobs:
               git push
             fi
           fi
-
-      - name: Upload logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: logs-${{ github.run_id }}-${{ github.run_attempt }}
-          path: '*.log'
-          retention-days: 15
