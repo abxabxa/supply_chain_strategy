@@ -256,6 +256,7 @@ class DiscoveryEngine:
 
     def _score_industry_match(self, name: str, industry: str = "") -> tuple:
         """名称+行业双重匹配。核心关键词高分，纯边缘降权。"""
+        industry = str(industry) if industry and not (isinstance(industry, float) and pd.isna(industry)) else ""
         text = f"{name} {industry}"
         score, matched, has_core = 0, [], False
 
