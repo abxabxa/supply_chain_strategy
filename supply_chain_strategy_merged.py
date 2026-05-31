@@ -94,7 +94,7 @@ class TushareClient:
         return pd.DataFrame()
 
     def get_top10_floatholders(self, ts_code: str, report_period: Optional[str] = None) -> pd.DataFrame:
-        """获取十大流通股东明细（含 holder_type 分类）"""
+        """获取十大流通股东明细（含 holder_type 分类）——只取最新季度前10条"""
         params = {"ts_code": ts_code}
         if report_period:
             params["end_date"] = report_period
@@ -107,6 +107,9 @@ class TushareClient:
                     df[col] = pd.to_numeric(df[col], errors="coerce")
             if "end_date" in df.columns:
                 df = df.sort_values("end_date", ascending=False)
+                # 关键修复：只保留最新季度的10条，防止多季度数据累加导致占比>100%
+                latest_date = df["end_date"].iloc[0]
+                df = df[df["end_date"] == latest_date].head(10)
         return df
 
     def get_all_stock_basics(self) -> pd.DataFrame:
@@ -214,17 +217,31 @@ GIANT_KWS = {
     "google": ["谷歌", "Google", "GOOGLE", "Alphabet", "Gemini", "TPU", "Waymo"],
 }
 
-INDUSTRY_KWS = [
+# 核心供应链关键词（五大巨头直接相关）——高权重
+CORE_INDUSTRY_KWS = [
+    # 英伟达链
     "光模块", "光器件", "光芯片", "CPO", "硅光", "800G", "1.6T",
     "PCB", "覆铜板", "CCL", "高频覆铜板", "高速PCB",
-    "刻蚀设备", "薄膜设备", "清洗设备", "半导体设备", "先进封装", "Chiplet",
     "AI芯片", "GPU", "算力", "智算中心", "数据中心",
     "液冷", "浸没式液冷", "散热", "温控",
     "HBM", "DDR5", "内存接口", "存储芯片",
+    "高速铜缆", "DAC", "高频铜箔", "服务器",
+    "刻蚀设备", "薄膜设备", "清洗设备", "半导体设备", "先进封装", "Chiplet",
+    # 苹果链
+    "精密", "玻璃", "声学", "无线", "耳机",
+    # 特斯拉链
     "汽车电子", "智能驾驶", "激光雷达", "BMS", "热管理", "线控制动", "一体化压铸",
     "人形机器人", "谐波减速器", "行星减速器", "滚珠丝杠", "空心杯电机", "无框力矩电机",
-    "高速铜缆", "DAC", "高频铜箔", "服务器", "代工", "ODM", "晶圆",
-    "封测", "电机", "电池", "储能", "电力", "芯片", "集成电路",
+    "电池", "电机",
+    # 博通链
+    "交换", "网络", "通信设备",
+    # 通用
+    "代工", "ODM", "晶圆", "封测", "芯片", "集成电路",
+]
+
+# 完整关键词列表（核心 + 扩展）
+INDUSTRY_KWS = CORE_INDUSTRY_KWS + [
+    "储能", "电力",  # 保留但评分时权重低
 ]
 
 NEGATIVE_KWS = [
@@ -311,15 +328,24 @@ class DiscoveryEngine:
         return list(codes)
 
     def _score_industry_match(self, name: str) -> float:
-        """根据股票名称匹配产业链关键词打分"""
+        """根据股票名称匹配产业链关键词打分。核心关键词高分，纯边缘关键词降权。"""
         score = 0
         matched = []
+        has_core = False
         for kw in INDUSTRY_KWS:
             if kw in name:
-                score += 0.15
                 matched.append(kw)
-        score = min(score, 0.75)
-        return score, matched
+                if kw in CORE_INDUSTRY_KWS:
+                    score += 0.2
+                    has_core = True
+                else:
+                    # 边缘关键词（电力、储能等）只给0.05，且必须同时有核心关键词才生效
+                    score += 0.05
+        # 纯边缘关键词匹配（如只有"电力"）大幅降权，避免电力股充斥候选池
+        if not has_core:
+            score *= 0.2
+        score = min(score, 0.8)
+        return score, matched, has_core
 
     def _infer_chain(self, name: str) -> str:
         """根据股票名称推断所属供应链"""
@@ -412,8 +438,9 @@ class DiscoveryEngine:
             logger.warning("News scan empty! Filtering A-shares by industry keywords...")
             scored_stocks = []
             for code, name in all_stocks.items():
-                score, matched = self._score_industry_match(name)
-                if score > 0 and matched:
+                score, matched, has_core = self._score_industry_match(name)
+                # 必须匹配至少一个核心关键词，避免电力股等边缘股票进入
+                if score > 0.15 and matched and has_core:
                     scored_stocks.append({
                         "ts_code": code,
                         "name": name,
@@ -446,7 +473,7 @@ class DiscoveryEngine:
 
         candidates = []
         for code, sig in best.items():
-            score, matched = self._score_industry_match(sig["name"])
+            score, matched, has_core = self._score_industry_match(sig["name"])
             chain = self._infer_chain(sig["name"])
             est_fund = self._estimate_fund_ratio(sig["name"], score)
             est_inst = self._estimate_inst_ratio(sig["name"], score)
