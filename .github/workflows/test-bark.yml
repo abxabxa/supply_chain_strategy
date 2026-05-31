@@ -1,0 +1,33 @@
+name: Test Bark Push
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install requests
+        run: pip install requests
+
+      - name: Test Bark push
+        env:
+          BARK_KEY: ${{ secrets.BARK_KEY }}
+        run: |
+          python -c "
+          import os, requests
+          key = os.getenv('BARK_KEY', '')
+          print(f'Key exists: {bool(key)}')
+          print(f'Key length: {len(key)}')
+          print(f'Key first/last 5 chars: {key[:5]}...{key[-5:]}')
+          
+          url = f'https://api.day.app/{key}/测试/如果你收到这条消息说明Bark配置正确'
+          r = requests.get(url, timeout=10)
+          print(f'Status: {r.status_code}')
+          print(f'Response: {r.text}')
+          "
