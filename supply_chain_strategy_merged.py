@@ -229,6 +229,30 @@ class DiscoveryEngine:
 
     POOL_FILE = "candidate_pool.json"
 
+    # 硬编码备选池：当公开API扫描不到时使用
+    FALLBACK_POOL = [
+        {"code": "300308.SZ", "name": "中际旭创", "chain": "英伟达-直接供应(光模块)"},
+        {"code": "300502.SZ", "name": "新易盛", "chain": "英伟达-直接供应(光模块)"},
+        {"code": "002463.SZ", "name": "沪电股份", "chain": "英伟达-直接供应(PCB)"},
+        {"code": "002475.SZ", "name": "立讯精密", "chain": "苹果-直接供应(代工)"},
+        {"code": "300433.SZ", "name": "蓝思科技", "chain": "苹果-直接供应(玻璃)"},
+        {"code": "601138.SH", "name": "工业富联", "chain": "英伟达-直接供应(服务器)"},
+        {"code": "002371.SZ", "name": "北方华创", "chain": "间接供应(半导体设备)"},
+        {"code": "300274.SZ", "name": "阳光电源", "chain": "间接供应(储能/电力)"},
+        {"code": "300124.SZ", "name": "汇川技术", "chain": "特斯拉-间接供应(电机)"},
+        {"code": "688012.SH", "name": "中微公司", "chain": "间接供应(刻蚀设备)"},
+        {"code": "002049.SZ", "name": "紫光国微", "chain": "间接供应(芯片)"},
+        {"code": "603501.SH", "name": "韦尔股份", "chain": "苹果-间接供应(CIS)"},
+        {"code": "688981.SH", "name": "中芯国际", "chain": "间接供应(晶圆代工)"},
+        {"code": "300394.SZ", "name": "天孚通信", "chain": "英伟达-直接供应(光器件)"},
+        {"code": "300014.SZ", "name": "亿纬锂能", "chain": "特斯拉-间接供应(电池)"},
+        {"code": "002594.SZ", "name": "比亚迪", "chain": "间接供应(汽车电子)"},
+        {"code": "300750.SZ", "name": "宁德时代", "chain": "特斯拉-间接供应(电池)"},
+        {"code": "688256.SH", "name": "寒武纪", "chain": "间接供应(AI芯片)"},
+        {"code": "600745.SH", "name": "闻泰科技", "chain": "间接供应(ODM)"},
+        {"code": "002156.SZ", "name": "通富微电", "chain": "AMD-间接供应(封测)"},
+    ]
+
     def __init__(self, tushare_client: Optional[TushareClient] = None):
         self.ts_client = tushare_client
         self.pool_path = Path.cwd() / self.POOL_FILE
@@ -291,46 +315,12 @@ class DiscoveryEngine:
                 codes.add(code)
         return list(codes)
 
-    def scan_news(self, days: int = 3) -> List[Dict]:
-        signals = []
-        if self.ts_client is None:
-            return signals
-        all_stocks = self.get_all_stocks()
-        if not all_stocks:
-            logger.error("Cannot get stock list for news scanning")
-            return signals
-        search_kws = [k for kws in GIANT_KWS.values() for k in kws[:3]]
+    # =========================================================================
+    # 公开API扫描（东方财富，无需Tushare积分）
+    # =========================================================================
 
-        for keyword in search_kws:
-            for d in range(days):
-                date = (datetime.now() - timedelta(days=d)).strftime("%Y%m%d")
-                try:
-                    df = self.ts_client.pro.major_news(
-                        start_date=date, end_date=date,
-                        fields="title,content,datetime,src"
-                    )
-                    if df is None or df.empty:
-                        continue
-                    for _, row in df.iterrows():
-                        full = f"{row.get('title', '')} {row.get('content', '')}"
-                        score = self.score_text(full)
-                        if score["net_score"] > 0.3 and score["is_supply_chain"]:
-                            codes = self.extract_stock_from_text(full, all_stocks)
-                            for code in codes:
-                                signals.append({
-                                    "ts_code": code,
-                                    "name": all_stocks.get(code, ""),
-                                    "title": str(row.get("title", ""))[:100],
-                                    "source": f"news:{row.get('src', '')}",
-                                    **score,
-                                    "date": str(row.get("datetime", ""))[:10],
-                                })
-                except Exception:
-                    break
-        return signals
-
-        def scan_public_news(self, days: int = 3) -> List[Dict]:
-        """使用东方财富公开API扫描新闻（无需Tushare积分）"""
+    def scan_public_news(self, days: int = 3) -> List[Dict]:
+        """使用东方财富公开API扫描新闻"""
         signals = []
         all_stocks = self.get_all_stocks()
         if not all_stocks:
@@ -366,7 +356,7 @@ class DiscoveryEngine:
         return signals
 
     def scan_public_announcements(self, pages: int = 3) -> List[Dict]:
-        """使用东方财富公开公告接口扫描（无需Tushare积分）"""
+        """使用东方财富公开公告接口扫描"""
         signals = []
         all_stocks = self.get_all_stocks()
         if not all_stocks:
@@ -414,6 +404,85 @@ class DiscoveryEngine:
             except Exception:
                 continue
         return signals
+
+    # =========================================================================
+    # Tushare扫描（备用，积分足够时使用）
+    # =========================================================================
+
+    def scan_news(self, days: int = 3) -> List[Dict]:
+        signals = []
+        if self.ts_client is None:
+            return signals
+        all_stocks = self.get_all_stocks()
+        search_kws = [k for kws in GIANT_KWS.values() for k in kws[:3]]
+
+        for keyword in search_kws:
+            for d in range(days):
+                date = (datetime.now() - timedelta(days=d)).strftime("%Y%m%d")
+                try:
+                    df = self.ts_client.pro.major_news(
+                        start_date=date, end_date=date,
+                        fields="title,content,datetime,src"
+                    )
+                    if df is None or df.empty:
+                        continue
+                    for _, row in df.iterrows():
+                        full = f"{row.get('title', '')} {row.get('content', '')}"
+                        score = self.score_text(full)
+                        if score["net_score"] > 0.3 and score["is_supply_chain"]:
+                            codes = self.extract_stock_from_text(full, all_stocks)
+                            for code in codes:
+                                signals.append({
+                                    "ts_code": code,
+                                    "name": all_stocks.get(code, ""),
+                                    "title": str(row.get("title", ""))[:100],
+                                    "source": f"news:{row.get('src', '')}",
+                                    **score,
+                                    "date": str(row.get("datetime", ""))[:10],
+                                })
+                except Exception:
+                    break
+        return signals
+
+    def scan_announcements(self, days: int = 3) -> List[Dict]:
+        signals = []
+        if self.ts_client is None:
+            return signals
+        all_stocks = self.get_all_stocks()
+        search_kws = [k for kws in GIANT_KWS.values() for k in kws[:2]]
+
+        for keyword in search_kws:
+            for d in range(min(days, 2)):
+                date = (datetime.now() - timedelta(days=d)).strftime("%Y%m%d")
+                try:
+                    df = self.ts_client.pro.major_news(
+                        start_date=date, end_date=date,
+                        fields="title,content,datetime,src"
+                    )
+                    if df is None or df.empty:
+                        continue
+                    for _, row in df.iterrows():
+                        title = str(row.get("title", ""))
+                        if keyword.lower() not in title.lower():
+                            continue
+                        score = self.score_text(title)
+                        if score["net_score"] > 0.2:
+                            company_name = title.split("：")[0].split(":")[0].strip()
+                            for code, name in all_stocks.items():
+                                if company_name == name or (len(company_name) >= 4 and company_name in name):
+                                    signals.append({
+                                        "ts_code": code, "name": name, "title": title[:100],
+                                        "source": "announcement", **score,
+                                        "date": str(row.get("datetime", ""))[:10],
+                                    })
+                                    break
+                except Exception:
+                    break
+        return signals
+
+    # =========================================================================
+    # 数据处理
+    # =========================================================================
 
     def deduplicate_and_score(self, signals: List[Dict]) -> List[Dict]:
         stock_scores: Dict[str, Dict] = {}
@@ -482,6 +551,10 @@ class DiscoveryEngine:
                 s["status"] = "watching"
         return candidates
 
+    # =========================================================================
+    # 每日运行入口
+    # =========================================================================
+
     def run_daily_scan(self) -> List[Dict]:
         logger.info("=" * 60)
         logger.info("DiscoveryEngine: Daily Full A-Share Scan")
@@ -494,15 +567,23 @@ class DiscoveryEngine:
 
         all_signals = []
 
-        logger.info("Scanning news...")
-        news_signals = self.scan_news(days=3)
+        # 主要数据源：东方财富公开API（无需积分）
+        logger.info("Scanning public news (eastmoney)...")
+        news_signals = self.scan_public_news(days=3)
         all_signals.extend(news_signals)
-        logger.info(f"   News signals: {len(news_signals)}")
+        logger.info(f"   Public news signals: {len(news_signals)}")
 
-        logger.info("Scanning announcements...")
-        ann_signals = self.scan_announcements(days=3)
+        logger.info("Scanning public announcements (eastmoney)...")
+        ann_signals = self.scan_public_announcements(pages=3)
         all_signals.extend(ann_signals)
-        logger.info(f"   Announcement signals: {len(ann_signals)}")
+        logger.info(f"   Public announcement signals: {len(ann_signals)}")
+
+        # 补充数据源：Tushare（如果积分充足）
+        if self.ts_client and self.ts_client.is_token_valid():
+            logger.info("Scanning Tushare news...")
+            tushare_news = self.scan_news(days=3)
+            all_signals.extend(tushare_news)
+            logger.info(f"   Tushare news signals: {len(tushare_news)}")
 
         logger.info("Deduplicating and scoring...")
         scored = self.deduplicate_and_score(all_signals)
@@ -510,6 +591,30 @@ class DiscoveryEngine:
 
         candidates = self.filter_candidates(scored)
         logger.info(f"   Confirmed candidates (score>=0.5): {len(candidates)}")
+
+        # 如果公开API扫描为空，使用备选池兜底
+        if not candidates:
+            logger.warning("Discovery scan returned 0 candidates! Using fallback pool.")
+            all_stocks = self.get_all_stocks()
+            candidates = []
+            for item in self.FALLBACK_POOL:
+                code = item["code"]
+                if code in all_stocks:
+                    candidates.append({
+                        "ts_code": code,
+                        "name": item["name"],
+                        "chain": item["chain"],
+                        "score": 0.6,
+                        "signal_count": 0,
+                        "direct_signals": 0,
+                        "indirect_signals": 0,
+                        "is_direct": "直接供应" in item["chain"],
+                        "evidence": "备选池兜底",
+                        "first_seen": datetime.now().strftime("%Y-%m-%d"),
+                        "last_seen": datetime.now().strftime("%Y-%m-%d"),
+                        "status": "confirmed",
+                    })
+            logger.info(f"   Fallback candidates: {len(candidates)}")
 
         results = []
         for c in candidates:
@@ -706,7 +811,6 @@ class BarkPusher:
 
     def __init__(self, key: Optional[str] = None, server: Optional[str] = None):
         self.key = key or os.getenv("BARK_KEY", "")
-        # 修复：如果 BARK_SERVER 是空字符串，也用默认地址
         server_env = os.getenv("BARK_SERVER", "")
         self.server = (server or server_env or self.DEFAULT_SERVER).rstrip("/")
         logger.info(f"Bark server: {self.server}")
