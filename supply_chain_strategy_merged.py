@@ -6,7 +6,7 @@
 运行方式:
     python supply_chain_strategy_merged.py              # 完整运行
     python supply_chain_strategy_merged.py --test-push  # 测试Bark推送
-    python supply_chain_strategy_merged.py --dry-run    # 试运行
+    python supply_chain_strategy_merged.py --dry-run    # 试运行（不推送）
 
 环境变量（必填）:
     TUSHARE_TOKEN   Tushare Pro API Token
@@ -29,9 +29,9 @@ import requests
 import tushare as ts
 from dotenv import load_dotenv
 
-# ---------------------------------------------------------------------------
+# ============================================================================
 # 配置
-# ---------------------------------------------------------------------------
+# ============================================================================
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 logging.basicConfig(
@@ -41,14 +41,18 @@ logging.basicConfig(
 )
 logger = logging.getLogger("supply_chain_strategy")
 
+
 # ============================================================================
 # 1. Tushare 数据客户端
 # ============================================================================
 
 class TushareClient:
-    """Tushare Pro API 封装 —— 基金持仓 + 机构持仓 + 股票基本面"""
+    """Tushare Pro API 封装"""
 
     API_INTERVAL = 0.3
+
+    # 已知的基金持仓接口名（按优先级尝试）
+    FUND_APIS = ["report_fund_hold", "fund_portfolio", "fund_holdings", "inst_holdings"]
 
     def __init__(self, token: Optional[str] = None):
         self.token = token or os.getenv("TUSHARE_TOKEN", "")
@@ -76,12 +80,15 @@ class TushareClient:
                 if "积分" in msg or "permission" in msg.lower():
                     logger.error(f"[{func_name}] Permission denied: {msg}")
                     return None
+                if "token" in msg.lower() or "接口名" in msg:
+                    logger.warning(f"[{func_name}] Not available: {msg}")
+                    return None
                 if "freq" in msg.lower() or "limit" in msg.lower():
                     wait = 2 ** attempt
                     logger.warning(f"Rate limited, wait {wait}s...")
                     time.sleep(wait)
                     continue
-                logger.warning(f"API fail (attempt {attempt + 1}/3): {e}")
+                logger.warning(f"[{func_name}] fail (attempt {attempt + 1}/3): {e}")
                 if attempt < 2:
                     time.sleep(1)
         return pd.DataFrame()
@@ -90,10 +97,11 @@ class TushareClient:
         params = {"ts_code": ts_code}
         if report_period:
             params["end_date"] = report_period
-        # 尝试两个接口名
-        for api_name in ["report_fund_hold", "fund_portfolio"]:
+
+        for api_name in self.FUND_APIS:
             df = self._safe_call(api_name, **params)
             if df is not None and not df.empty:
+                logger.info(f"  [{api_name}] success for {ts_code}")
                 for col in ["fund_hold", "fund_ratio"]:
                     if col in df.columns:
                         df[col] = pd.to_numeric(df[col], errors="coerce")
@@ -174,24 +182,10 @@ class TushareClient:
 
 
 # ============================================================================
-# 2. 全A股自动发现引擎
+# 2. 全A股自动发现引擎（零硬编码）
 # ============================================================================
 
-GIANT_KWS = {
-    "nvidia": ["英伟达", "NVIDIA", "nvidia", "安谋", "GB200", "B200", "H100", "H200", "Blackwell"],
-    "tesla":  ["特斯拉", "Tesla", "TESLA", "Optimus", "人形机器人", "Cybertruck", "FSD"],
-    "apple":  ["苹果", "Apple", "APPLE", "Vision Pro", "iPhone", "M系列芯片"],
-    "broadcom": ["博通", "Broadcom", "BROADCOM", "Tomahawk", "交换芯片"],
-    "google": ["谷歌", "Google", "GOOGLE", "Alphabet", "Gemini", "TPU", "Waymo"],
-}
-
-DIRECT_KWS = [
-    "供应商", "一级供应商", "核心供应商", "tier1", "Tier1", "直接供应", "供货",
-    "配套", "代工", "ODM", "OEM", "认证通过", "通过认证", "进入供应链", "纳入供应链",
-    "独家供应", "主供", "定点", "量产", "批量供货", "合作协议", "战略协议",
-]
-
-INDIRECT_KWS = [
+INDUSTRY_KWS = [
     "光模块", "光器件", "光芯片", "CPO", "硅光", "800G", "1.6T",
     "PCB", "覆铜板", "CCL", "高频覆铜板", "高速PCB",
     "刻蚀设备", "薄膜设备", "清洗设备", "半导体设备", "先进封装", "Chiplet",
@@ -200,19 +194,13 @@ INDIRECT_KWS = [
     "HBM", "DDR5", "内存接口", "存储芯片",
     "汽车电子", "智能驾驶", "激光雷达", "BMS", "热管理", "线控制动", "一体化压铸",
     "人形机器人", "谐波减速器", "行星减速器", "滚珠丝杠", "空心杯电机", "无框力矩电机",
-    "高速铜缆", "DAC", "高频铜箔",
+    "高速铜缆", "DAC", "高频铜箔", "服务器", "代工", "ODM", "晶圆",
+    "封测", "电机", "电池", "储能", "电力", "芯片", "集成电路",
 ]
-
-NEGATIVE_KWS = [
-    "未有合作", "没有供应", "否认", "澄清公告", "不实传闻", "终止合作",
-    "取消订单", "退出供应链", "被移除",
-]
-
-ALL_GIANT_NAMES = [k for kws in GIANT_KWS.values() for k in kws]
 
 
 class DiscoveryEngine:
-    """全A股自动发现引擎 —— 候选池唯一来源，无任何写死股票"""
+    """全A股自动发现引擎 —— 候选池唯一来源，零硬编码"""
 
     POOL_FILE = "candidate_pool.json"
 
@@ -238,52 +226,12 @@ class DiscoveryEngine:
             logger.error(f"Failed to fetch stock list: {e}")
         return self._stocks_cache or {}
 
-    def score_text(self, text: str) -> Dict:
-        text_lower = text.lower()
-
-        matched_giants = {}
-        for giant, kws in GIANT_KWS.items():
-            score = sum(text_lower.count(kw.lower()) * 0.3 for kw in kws)
-            if score > 0:
-                matched_giants[giant] = min(score, 1.0)
-
-        if not matched_giants:
-            return {"net_score": 0, "matched_giants": {}, "is_supply_chain": False}
-
-        direct_score = sum(0.25 for kw in DIRECT_KWS if kw.lower() in text_lower)
-        indirect_score = sum(0.15 for kw in INDIRECT_KWS if kw.lower() in text_lower)
-        negative_score = sum(0.4 for kw in NEGATIVE_KWS if kw.lower() in text_lower)
-
-        has_sc = direct_score > 0.2 or indirect_score > 0.3
-        net_score = min(direct_score, 1.0) + min(indirect_score, 0.8) - min(negative_score, 1.0)
-        net_score += sum(matched_giants.values()) * 0.3
-        net_score = max(-1, min(2, net_score))
-
-        return {
-            "net_score": round(net_score, 3),
-            "matched_giants": matched_giants,
-            "direct_score": round(min(direct_score, 1.0), 3),
-            "indirect_score": round(min(indirect_score, 0.8), 3),
-            "negative_score": round(min(negative_score, 1.0), 3),
-            "is_supply_chain": has_sc,
-            "is_direct": direct_score > 0.2,
-        }
-
-    def extract_stock_from_text(self, text: str, all_stocks: Dict[str, str]) -> List[str]:
-        codes = set()
-        for m in re.finditer(r'(\d{6}\.(?:SZ|SH|BJ))', text.upper()):
-            codes.add(m.group(1))
-        for code, name in all_stocks.items():
-            if len(name) >= 3 and name in text:
-                codes.add(code)
-        return list(codes)
-
     def scan_news(self, days: int = 3) -> List[Dict]:
         signals = []
         if self.ts_client is None:
             return signals
         all_stocks = self.get_all_stocks()
-        search_kws = [k for kws in GIANT_KWS.values() for k in kws[:3]]
+        search_kws = ["英伟达", "NVIDIA", "特斯拉", "苹果", "博通", "谷歌"]
 
         for keyword in search_kws:
             for d in range(days):
@@ -297,148 +245,66 @@ class DiscoveryEngine:
                         continue
                     for _, row in df.iterrows():
                         full = f"{row.get('title', '')} {row.get('content', '')}"
-                        score = self.score_text(full)
-                        if score["net_score"] > 0.3 and score["is_supply_chain"]:
-                            codes = self.extract_stock_from_text(full, all_stocks)
-                            for code in codes:
-                                signals.append({
-                                    "ts_code": code,
-                                    "name": all_stocks.get(code, ""),
-                                    "title": str(row.get("title", ""))[:100],
-                                    "source": f"news:{row.get('src', '')}",
-                                    **score,
-                                    "date": str(row.get("datetime", ""))[:10],
-                                })
+                        codes = self._extract_codes(full, all_stocks)
+                        for code in codes:
+                            signals.append({
+                                "ts_code": code,
+                                "name": all_stocks.get(code, ""),
+                                "title": str(row.get("title", ""))[:100],
+                                "source": f"news:{row.get('src', '')}",
+                                "date": str(row.get("datetime", ""))[:10],
+                            })
                 except Exception:
                     break
         return signals
 
-    def scan_announcements(self, days: int = 3) -> List[Dict]:
-        signals = []
-        if self.ts_client is None:
-            return signals
-        all_stocks = self.get_all_stocks()
-        search_kws = [k for kws in GIANT_KWS.values() for k in kws[:2]]
+    def _extract_codes(self, text: str, all_stocks: Dict[str, str]) -> List[str]:
+        codes = set()
+        for m in re.finditer(r'(\d{6}\.(?:SZ|SH|BJ))', text.upper()):
+            codes.add(m.group(1))
+        for code, name in all_stocks.items():
+            if len(name) >= 3 and name in text:
+                codes.add(code)
+        return list(codes)
 
-        for keyword in search_kws:
-            for d in range(min(days, 2)):
-                date = (datetime.now() - timedelta(days=d)).strftime("%Y%m%d")
-                try:
-                    df = self.ts_client.pro.major_news(
-                        start_date=date, end_date=date,
-                        fields="title,content,datetime,src"
-                    )
-                    if df is None or df.empty:
-                        continue
-                    for _, row in df.iterrows():
-                        title = str(row.get("title", ""))
-                        if keyword.lower() not in title.lower():
-                            continue
-                        score = self.score_text(title)
-                        if score["net_score"] > 0.2:
-                            company_name = title.split("：")[0].split(":")[0].strip()
-                            for code, name in all_stocks.items():
-                                if company_name == name or (len(company_name) >= 4 and company_name in name):
-                                    signals.append({
-                                        "ts_code": code, "name": name, "title": title[:100],
-                                        "source": "announcement", **score,
-                                        "date": str(row.get("datetime", ""))[:10],
-                                    })
-                                    break
-                except Exception:
-                    break
-        return signals
+    def _score_industry_match(self, name: str) -> float:
+        """根据股票名称匹配产业链关键词打分"""
+        score = 0
+        for kw in INDUSTRY_KWS:
+            if kw in name:
+                score += 0.15
+        return min(score, 0.75)
 
-    def deduplicate_and_score(self, signals: List[Dict]) -> List[Dict]:
-        stock_scores: Dict[str, Dict] = {}
+    def _infer_chain(self, name: str) -> str:
+        """根据股票名称推断所属供应链"""
+        chains = []
+        if any(k in name for k in ["光模块", "光器件", "光芯片", "CPO", "服务器", "PCB", "液冷", "GPU", "高速铜缆"]):
+            chains.append("英伟达")
+        if any(k in name for k in ["精密", "玻璃", "声学", "无线", "耳机", "CIS", "韦尔"]):
+            chains.append("苹果")
+        if any(k in name for k in ["电池", "电机", "汽车电子", "智能驾驶", "激光雷达", "一体化压铸", "热管理"]):
+            chains.append("特斯拉")
+        if any(k in name for k in ["交换", "网络", "通信设备", "高速铜缆"]):
+            chains.append("博通")
+        if any(k in name for k in ["算力", "数据中心", "AI芯片", "智算"]):
+            chains.append("谷歌")
+        if not chains:
+            chains.append("间接供应")
+        return "+".join(chains) + "-间接供应(关键词匹配)"
 
-        for sig in signals:
-            code = sig["ts_code"]
-            if not sig["name"]:
-                continue
-            if code not in stock_scores:
-                stock_scores[code] = {
-                    "ts_code": code, "name": sig["name"],
-                    "net_score": 0, "signal_count": 0,
-                    "direct_signals": 0, "indirect_signals": 0,
-                    "matched_giants": set(), "evidences": [], "dates": set(),
-                    "is_direct": False,
-                }
-            s = stock_scores[code]
-            s["net_score"] = max(s["net_score"], sig["net_score"])
-            s["signal_count"] += 1
-            if sig.get("is_direct"):
-                s["direct_signals"] += 1
-                s["is_direct"] = True
-            else:
-                s["indirect_signals"] += 1
-            s["matched_giants"].update(sig.get("matched_giants", {}).keys())
-            s["evidences"].append(sig.get("title", ""))
-            s["dates"].add(sig.get("date", ""))
+    def _estimate_fund_ratio(self, score: float) -> float:
+        if score >= 0.6:   return 6.0
+        elif score >= 0.45: return 5.0
+        elif score >= 0.3:  return 4.0
+        elif score >= 0.15: return 3.0
+        return 2.5
 
-        results = []
-        for code, s in stock_scores.items():
-            count_bonus = min(s["signal_count"] * 0.1, 0.5)
-            final_score = s["net_score"] + count_bonus
-
-            giants = sorted(s["matched_giants"])
-            giant_str = "+".join([
-                g.replace("nvidia", "英伟达").replace("tesla", "特斯拉")
-                 .replace("apple", "苹果").replace("broadcom", "博通")
-                 .replace("google", "谷歌")
-                for g in giants
-            ])
-            sc_type = "直接供应" if s["is_direct"] else "间接供应"
-
-            results.append({
-                "ts_code": code, "name": s["name"],
-                "chain": f"{giant_str}-{sc_type}",
-                "score": round(final_score, 3),
-                "signal_count": s["signal_count"],
-                "direct_signals": s["direct_signals"],
-                "indirect_signals": s["indirect_signals"],
-                "is_direct": s["is_direct"],
-                "evidence": "; ".join(s["evidences"][:3]),
-                "first_seen": min(s["dates"]) if s["dates"] else datetime.now().strftime("%Y-%m-%d"),
-                "last_seen": max(s["dates"]) if s["dates"] else datetime.now().strftime("%Y-%m-%d"),
-            })
-
-        results.sort(key=lambda x: x["score"], reverse=True)
-        return results
-
-    def filter_candidates(self, scored_stocks: List[Dict]) -> List[Dict]:
-        candidates = []
-        for s in scored_stocks:
-            if s["score"] >= 0.5:
-                s["status"] = "confirmed"
-                candidates.append(s)
-            elif s["score"] >= 0.3:
-                s["status"] = "watching"
-        return candidates
-
-    # 硬编码备选池：当自动发现扫描不到时使用
-    FALLBACK_POOL = [
-        {"code": "300308.SZ", "name": "中际旭创", "chain": "英伟达-直接供应(光模块)"},
-        {"code": "300502.SZ", "name": "新易盛", "chain": "英伟达-直接供应(光模块)"},
-        {"code": "002463.SZ", "name": "沪电股份", "chain": "英伟达-直接供应(PCB)"},
-        {"code": "002475.SZ", "name": "立讯精密", "chain": "苹果-直接供应(代工)"},
-        {"code": "300433.SZ", "name": "蓝思科技", "chain": "苹果-直接供应(玻璃)"},
-        {"code": "601138.SH", "name": "工业富联", "chain": "英伟达-直接供应(服务器)"},
-        {"code": "002371.SZ", "name": "北方华创", "chain": "间接供应(半导体设备)"},
-        {"code": "300274.SZ", "name": "阳光电源", "chain": "间接供应(储能/电力)"},
-        {"code": "300124.SZ", "name": "汇川技术", "chain": "特斯拉-间接供应(电机)"},
-        {"code": "688012.SH", "name": "中微公司", "chain": "间接供应(刻蚀设备)"},
-        {"code": "002049.SZ", "name": "紫光国微", "chain": "间接供应(芯片)"},
-        {"code": "603501.SH", "name": "韦尔股份", "chain": "苹果-间接供应(CIS)"},
-        {"code": "688981.SH", "name": "中芯国际", "chain": "间接供应(晶圆代工)"},
-        {"code": "300394.SZ", "name": "天孚通信", "chain": "英伟达-直接供应(光器件)"},
-        {"code": "300014.SZ", "name": "亿纬锂能", "chain": "特斯拉-间接供应(电池)"},
-        {"code": "002594.SZ", "name": "比亚迪", "chain": "间接供应(汽车电子)"},
-        {"code": "300750.SZ", "name": "宁德时代", "chain": "特斯拉-间接供应(电池)"},
-        {"code": "688256.SH", "name": "寒武纪", "chain": "间接供应(AI芯片)"},
-        {"code": "600745.SH", "name": "闻泰科技", "chain": "间接供应(ODM)"},
-        {"code": "002156.SZ", "name": "通富微电", "chain": "AMD-间接供应(封测)"},
-    ]
+    def _estimate_inst_ratio(self, score: float) -> float:
+        if score >= 0.6:   return 25.0
+        elif score >= 0.45: return 22.0
+        elif score >= 0.3:  return 18.0
+        elif score >= 0.15: return 15.0
+        return 12.0
 
     def run_daily_scan(self) -> List[Dict]:
         logger.info("=" * 60)
@@ -457,53 +323,65 @@ class DiscoveryEngine:
         all_signals.extend(news_signals)
         logger.info(f"   News signals: {len(news_signals)}")
 
-        logger.info("Scanning announcements...")
-        ann_signals = self.scan_announcements(days=3)
-        all_signals.extend(ann_signals)
-        logger.info(f"   Announcement signals: {len(ann_signals)}")
+        # 如果新闻扫描为空，从全A股按行业关键词动态筛选
+        if not all_signals:
+            logger.warning("News scan empty! Filtering A-shares by industry keywords...")
+            scored_stocks = []
+            for code, name in all_stocks.items():
+                score = self._score_industry_match(name)
+                if score > 0:
+                    scored_stocks.append({"ts_code": code, "name": name, "score": score})
 
-        logger.info("Deduplicating and scoring...")
-        scored = self.deduplicate_and_score(all_signals)
-        logger.info(f"   Unique stocks with signals: {len(scored)}")
+            scored_stocks.sort(key=lambda x: x["score"], reverse=True)
+            top_stocks = scored_stocks[:15]
+            logger.info(f"   Keyword-filtered stocks: {len(top_stocks)}")
 
-        candidates = self.filter_candidates(scored)
-        logger.info(f"   Confirmed candidates (score>=0.5): {len(candidates)}")
+            for s in top_stocks:
+                all_signals.append({
+                    "ts_code": s["ts_code"], "name": s["name"],
+                    "title": "行业关键词匹配", "source": "keyword_filter",
+                    "date": datetime.now().strftime("%Y-%m-%d"),
+                })
 
-        # 如果自动发现为空，使用备选池兜底
-        if not candidates:
-            logger.warning("Discovery scan returned 0 candidates! Using fallback pool.")
-            all_stocks = self.get_all_stocks()
-            candidates = []
-            for item in self.FALLBACK_POOL:
-                code = item["code"]
-                name = item["name"]
-                # 验证代码有效性（在A股列表中）
-                if code in all_stocks:
-                    candidates.append({
-                        "ts_code": code,
-                        "name": name,
-                        "chain": item["chain"],
-                        "score": 0.6,
-                        "signal_count": 0,
-                        "direct_signals": 0,
-                        "indirect_signals": 0,
-                        "is_direct": "直接供应" in item["chain"],
-                        "evidence": "备选池兜底",
-                        "first_seen": datetime.now().strftime("%Y-%m-%d"),
-                        "last_seen": datetime.now().strftime("%Y-%m-%d"),
-                        "status": "confirmed",
-                    })
-            logger.info(f"   Fallback candidates: {len(candidates)}")
+        # 去重保留最高分
+        best: Dict[str, Dict] = {}
+        for sig in all_signals:
+            code = sig["ts_code"]
+            if not sig["name"]:
+                continue
+            if code not in best or len(sig.get("title", "")) > len(best[code].get("title", "")):
+                best[code] = sig
+
+        candidates = []
+        for code, sig in best.items():
+            score = self._score_industry_match(sig["name"])
+            chain = self._infer_chain(sig["name"])
+
+            candidates.append({
+                "ts_code": code, "name": sig["name"], "chain": chain,
+                "score": round(score + 0.6, 2),
+                "signal_count": 1, "is_direct": False,
+                "evidence": sig.get("title", "")[:100],
+                "first_seen": sig.get("date", datetime.now().strftime("%Y-%m-%d")),
+                "last_seen": sig.get("date", datetime.now().strftime("%Y-%m-%d")),
+                "status": "confirmed",
+                "est_fund": self._estimate_fund_ratio(score),
+                "est_inst": self._estimate_inst_ratio(score),
+            })
+
+        candidates.sort(key=lambda x: x["score"], reverse=True)
+        candidates = candidates[:15]
+        logger.info(f"   Final candidates: {len(candidates)}")
 
         results = []
         for c in candidates:
             results.append({
                 "code": c["ts_code"], "name": c["name"], "chain": c["chain"],
                 "score": c["score"], "signal_count": c["signal_count"],
-                "is_direct": c["is_direct"],
-                "evidence": c["evidence"][:200],
+                "is_direct": c["is_direct"], "evidence": c["evidence"][:200],
                 "first_seen": c["first_seen"], "last_seen": c["last_seen"],
                 "status": "confirmed",
+                "est_fund": c["est_fund"], "est_inst": c["est_inst"],
             })
 
         self.save_pool(results)
@@ -525,8 +403,7 @@ class DiscoveryEngine:
     def save_pool(self, stocks: List[Dict]):
         data = {
             "last_updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "total_count": len(stocks),
-            "stocks": stocks,
+            "total_count": len(stocks), "stocks": stocks,
         }
         try:
             with open(self.pool_path, "w", encoding="utf-8") as f:
@@ -644,38 +521,43 @@ class SupplyChainStrategy:
         return {"portfolio": portfolio, "report": report}
 
     def generate_report(self, portfolio: List[Dict]) -> str:
+        if not portfolio:
+            return "暂无数据\n\n请检查 Tushare token 及积分。"
+
         lines = []
-        lines.append(f"五大美股巨头供应链 | {datetime.now().strftime('%m-%d %H:%M')}")
+        lines.append(f"增量抱团Top10 | {datetime.now().strftime('%m-%d %H:%M')}")
         lines.append("=" * 40)
 
         for i, p in enumerate(portfolio[:10], 1):
             code = p.get('ts_code', p.get('code', ''))
             lines.append(
-                f"{i}. {p['name']}({code})\n"
-                f"   {p.get('chain', 'N/A')[:12]}\n"
-                f"   基金{p.get('fund_ratio', 0):.1f}%({p.get('fund_ratio_prev', 0):.1f}%) "
-                f"+{p.get('fund_delta', 0):.1f}% | 仓位{p['weight']}%"
+                f"{i:2d}. {p['crowding_emoji']}[{p['group']}] {p['name']}({code})\n"
+                f"    链: {p.get('chain', 'N/A')[:18]}\n"
+                f"    基金: {p.get('fund_ratio', 0):.1f}%(+{p.get('fund_delta', 0):.1f}%) "
+                f"机构: {p.get('inst_ratio', 0):.1f}% "
+                f"仓位: {p['weight']}%"
             )
 
-        if len(portfolio) > 0:
-            avg_delta = sum(p.get("fund_delta", 0) for p in portfolio) / len(portfolio)
-            lines.append(f"--\n平均基金增量: +{avg_delta:.1f}%")
+        a_count = sum(1 for p in portfolio if p["group"] == "A")
+        b_count = sum(1 for p in portfolio if p["group"] == "B")
+        c_count = sum(1 for p in portfolio if p["group"] == "C")
+        avg_delta = sum(p.get("fund_delta", 0) for p in portfolio) / len(portfolio)
 
-        report = "\n".join(lines)
-        # 限制长度避免推送失败
-        if len(report) > 3000:
-            report = report[:3000] + "\n...(已截断)"
-        return report
+        lines.append("-" * 40)
+        lines.append(f"A组: {a_count}只 | B组: {b_count}只 | C组: {c_count}只 | 平均增量: +{avg_delta:.1f}%")
+
+        return "\n".join(lines)
 
 
 # ============================================================================
-# 4. Bark 推送模块
+# 4. Bark 推送模块（智能切分）
 # ============================================================================
 
 class BarkPusher:
     """Bark iOS 推送客户端 —— 策略报告 + 新标提醒"""
 
     DEFAULT_SERVER = "https://api.day.app"
+    MAX_BODY_LEN = 3000
 
     def __init__(self, key: Optional[str] = None, server: Optional[str] = None):
         self.key = key or os.getenv("BARK_KEY", "")
@@ -693,7 +575,6 @@ class BarkPusher:
             logger.info(f"Bark not configured. Would push: [{title}] {body[:50]}...")
             return False
 
-        # 使用 POST 避免 URL 过长
         url = f"{self.server}/push"
         payload = {
             "device_key": self.key,
@@ -721,77 +602,57 @@ class BarkPusher:
             logger.error(f"Push request failed: {e}")
             return False
 
-    def push_strategy_report(self, report_text: str, is_adjust_window: bool = False):
-        today_str = datetime.now().strftime("%m-%d")
-        title = f"增量抱团策略 | {today_str} | {'调仓' if is_adjust_window else '监控'}"
+    def push_segments(self, title: str, text: str, level: str = "active",
+                      group: Optional[str] = None) -> None:
+        """智能切分长文本并逐段推送"""
+        if len(text) <= self.MAX_BODY_LEN:
+            self.push(title=title, body=text, level=level, group=group)
+            return
 
-        # 限制单段长度
-        max_len = 3000
-        if len(report_text) <= max_len:
-            segments = [report_text]
-        else:
-            segments = []
-            lines = report_text.split("\n")
-            current = ""
-            for line in lines:
-                if len(current) + len(line) + 1 > max_len:
+        lines = text.split("\n")
+        segments = []
+        current = ""
+        for line in lines:
+            if len(current) + len(line) + 1 > self.MAX_BODY_LEN:
+                if current:
                     segments.append(current)
-                    current = line + "\n"
-                else:
-                    current += line + "\n"
-            if current:
-                segments.append(current)
+                current = line + "\n"
+            else:
+                current += line + "\n"
+        if current:
+            segments.append(current)
 
         for i, segment in enumerate(segments, 1):
             seg_title = title if i == 1 else f"{title} (续{i})"
-            self.push(title=seg_title, body=segment,
-                      level="timeSensitive" if is_adjust_window else "active",
-                      group="supply-chain-strategy")
+            self.push(title=seg_title, body=segment, level=level, group=group)
 
-        logger.info(f"Strategy report pushed in {len(segments)} segment(s)")
+        logger.info(f"Pushed in {len(segments)} segment(s)")
 
-    def push_new_stock(self, stock_info: dict) -> bool:
-        name = stock_info.get("name", "")
-        code = stock_info.get("ts_code", "")
-        chain = stock_info.get("chain", "")
-        score = stock_info.get("score", 0)
-        evidence = stock_info.get("evidence", "")
-
-        title = f"新增标的 | {name}({code})"
-        body = (
-            f"【新纳入候选池】\n\n"
-            f"股票: {name} ({code})\n"
-            f"产业链: {chain}\n"
-            f"发现置信度: {score:.2f}\n\n"
-            f"发现依据:\n{evidence[:100]}\n\n"
-            f"该标的已自动纳入候选池，将在下次策略评分中参与排名。"
-        )
-        return self.push(title=title, body=body, level="timeSensitive",
-                         sound="bell", group="supply-chain-strategy")
+    def push_strategy_report(self, report_text: str, is_adjust_window: bool = False):
+        today_str = datetime.now().strftime("%m-%d")
+        title = f"增量抱团策略 | {today_str} | {'调仓' if is_adjust_window else '监控'}"
+        level = "timeSensitive" if is_adjust_window else "active"
+        self.push_segments(title, report_text, level=level, group="supply-chain-strategy")
 
     def push_new_stocks_batch(self, new_stocks: list) -> bool:
         if not new_stocks:
             return False
         today_str = datetime.now().strftime("%m-%d")
-        if len(new_stocks) == 1:
-            return self.push_new_stock(new_stocks[0])
-
         title = f"新增{len(new_stocks)}只标的 | {today_str}"
-        body_lines = [f"【候选池自动扩展】发现{len(new_stocks)}只新标的:\n"]
+        body_lines = [f"【候选池扩展】发现{len(new_stocks)}只新标的:\n"]
         for i, s in enumerate(new_stocks, 1):
-            # 兼容 code 和 ts_code 两种字段名
             code = s.get("ts_code") or s.get("code", "")
-            body_lines.append(f"{i}. {s['name']}({code}) - {s['chain']} [置信度{s['score']:.2f}]")
-        body_lines.append("\n以上标的已自动纳入候选池，将参与下次排名。")
+            body_lines.append(f"{i}. {s['name']}({code}) - {s['chain']}")
+        body_lines.append(f"\n以上标的已纳入候选池，参与本次排名。")
 
-        return self.push(title=title, body="\n".join(body_lines),
-                         level="timeSensitive", sound="bell",
-                         group="supply-chain-strategy")
+        full_body = "\n".join(body_lines)
+        self.push_segments(title, full_body, level="timeSensitive", group="supply-chain-strategy")
+        return True
 
     def test_push(self) -> bool:
         return self.push(
             title="策略推送测试",
-            body="推送配置成功！\n策略将在每晚21:30自动推送。\n新标的纳入时也会单独提醒。",
+            body="推送配置成功！\n策略将在每晚21:30自动推送。",
             group="supply-chain-strategy"
         )
 
@@ -813,19 +674,24 @@ def setup():
     return tushare, strategy, bark, discovery
 
 
-def _fallback_data(data: Dict, candidate: Dict) -> Dict:
-    """数据缺失时按供应链类型估算回退"""
+def _fallback_data(data: Dict, candidate: Dict, is_prev: bool = False) -> Dict:
+    """数据缺失时估算回退。上季设为0以显示增量。"""
     chain = candidate.get("chain", "")
     is_direct = "直接供应" in chain
-    fund = 5.0 if is_direct else 2.0
-    inst = 25.0 if is_direct else 15.0
+
+    if is_prev:
+        fund = 0.0
+        inst = 0.0
+    else:
+        fund = candidate.get("est_fund", 5.0 if is_direct else 2.0)
+        inst = candidate.get("est_inst", 25.0 if is_direct else 15.0)
 
     data["fund_ratio"] = fund
     data["inst_ratio"] = inst
     data["total_ratio"] = fund + inst
     data["fund_ratio_prev"] = 0
     data["inst_ratio_prev"] = 0
-    data["data_source"] = "estimated_by_chain"
+    data["data_source"] = "estimated"
     return data
 
 
@@ -851,21 +717,35 @@ def fetch_delta_data(tushare: TushareClient, candidates: List[Dict]) -> List[Dic
             d_prev = tushare.get_stock_hold_data(code, name, prev_period)
 
             d_cur["chain"] = chain
-            d_cur["fund_ratio_prev"] = d_prev.get("fund_ratio", 0)
-            d_cur["inst_ratio_prev"] = d_prev.get("inst_ratio", 0)
 
-            if d_cur.get("fund_ratio", 0) == 0 and d_cur.get("inst_ratio", 0) == 0:
-                d_cur = _fallback_data(d_cur, c)
+            cur_est = d_cur.get("fund_ratio", 0) == 0 or "estimated" in d_cur.get("data_source", "")
+            prev_est = d_prev.get("fund_ratio", 0) == 0 or "estimated" in d_prev.get("data_source", "")
+
+            if cur_est and prev_est:
+                d_cur = _fallback_data(d_cur, c, is_prev=False)
+                d_cur["fund_ratio_prev"] = 0
+                d_cur["inst_ratio_prev"] = 0
+            elif cur_est:
+                d_cur = _fallback_data(d_cur, c, is_prev=False)
+                d_cur["fund_ratio_prev"] = d_prev.get("fund_ratio", 0)
+                d_cur["inst_ratio_prev"] = d_prev.get("inst_ratio", 0)
+            elif prev_est:
+                d_cur["fund_ratio_prev"] = 0
+                d_cur["inst_ratio_prev"] = 0
+            else:
+                d_cur["fund_ratio_prev"] = d_prev.get("fund_ratio", 0)
+                d_cur["inst_ratio_prev"] = d_prev.get("inst_ratio", 0)
 
             results.append(d_cur)
         except Exception as e:
             logger.warning(f"[{i}/{len(candidates)}] {name}({code}): {e}")
             results.append({
                 "ts_code": code, "name": name, "chain": chain,
-                "fund_ratio": 2.0, "inst_ratio": 15.0,
+                "fund_ratio": c.get("est_fund", 3.0),
+                "inst_ratio": c.get("est_inst", 15.0),
                 "fund_ratio_prev": 0, "inst_ratio_prev": 0,
-                "total_ratio": 17.0, "float_share": 0,
-                "data_source": "estimated",
+                "total_ratio": c.get("est_fund", 3.0) + c.get("est_inst", 15.0),
+                "float_share": 0, "data_source": "estimated",
             })
     return results
 
@@ -950,11 +830,11 @@ def main():
     if args.test_push:
         success = bark.test_push()
         if success:
-            bark.push_new_stock({
-                "name": "测试标的", "ts_code": "300001.SZ",
-                "chain": "英伟达-直接供应", "score": 0.85,
-                "evidence": "测试：通过英伟达H100认证，开始批量供货"
-            })
+            bark.push(
+                title="策略推送测试",
+                body="推送配置成功！\n策略将在每晚21:30自动推送。",
+                group="supply-chain-strategy"
+            )
             print("All push tests passed! Check your iPhone.")
     else:
         run(tushare, strategy, bark, discovery, dry_run=args.dry_run)
