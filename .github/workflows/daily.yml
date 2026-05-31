@@ -31,16 +31,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Create .env
-        run: |
-          cat > .env << EOF
-          TUSHARE_TOKEN=${{ secrets.TUSHARE_TOKEN }}
-          BARK_KEY=${{ secrets.BARK_KEY }}
-          BARK_SERVER=${{ secrets.BARK_SERVER }}
-          LOG_LEVEL=INFO
-          EOF
-
       - name: Run strategy
+        env:
+          TUSHARE_TOKEN: ${{ secrets.TUSHARE_TOKEN }}
+          BARK_KEY: ${{ secrets.BARK_KEY }}
+          BARK_SERVER: ${{ secrets.BARK_SERVER }}
+          LOG_LEVEL: INFO
         run: python supply_chain_strategy_merged.py ${{ github.event.inputs.dry_run == 'true' && '--dry-run' || '' }}
 
       - name: Save candidate pool changes
