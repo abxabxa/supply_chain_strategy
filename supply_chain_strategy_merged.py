@@ -52,6 +52,9 @@ class TushareClient:
     FUND_TYPES = {"基金", "证券投资基金", "公募基金", "私募基金"}
     INST_TYPES = {"社保基金", "QFII", "保险", "券商", "信托", "银行理财", "企业年金",
                   "保险资金", "社保", "外资", "合格境外机构投资者"}
+    # 高盛/摩根士丹利名称关键词
+    GS_KEYWORDS = ("高盛", "高華", "Goldman", "GSIC", "GSIP")
+    MS_KEYWORDS = ("摩根士丹利", "摩根史坦利", "大摩", "Morgan Stanley", "MORGAN STANLEY")
 
     def __init__(self, token: Optional[str] = None):
         self.token = token or os.getenv("TUSHARE_TOKEN", "")
@@ -134,6 +137,7 @@ class TushareClient:
             "fund_ratio": 0, "inst_ratio": 0, "total_ratio": 0,
             "float_share": self._float_share_cache.get(ts_code, 0),
             "fund_count": 0, "inst_count": 0,
+            "gs_increased": False, "ms_increased": False,
             "report_period": report_period or "", "data_source": "",
         }
         df = self.get_top10_floatholders(ts_code, report_period)
@@ -142,9 +146,19 @@ class TushareClient:
 
         fund_ratio = inst_ratio = 0.0
         fund_count = inst_count = 0
+        gs_flag = ms_flag = False
         for _, row in df.iterrows():
             htype = str(row.get("holder_type", "")).strip()
             hfloat = float(row.get("hold_float_ratio", 0) or 0)
+            hchange = float(row.get("hold_change", 0) or 0)
+            hname = str(row.get("holder_name", ""))
+
+            # 检测高盛/摩根士丹利增持 (hold_change > 0)
+            if not gs_flag and any(k in hname for k in self.GS_KEYWORDS) and hchange > 0:
+                gs_flag = True
+            if not ms_flag and any(k in hname for k in self.MS_KEYWORDS) and hchange > 0:
+                ms_flag = True
+
             if htype in self.FUND_TYPES:
                 fund_ratio += hfloat
                 fund_count += 1
@@ -152,7 +166,6 @@ class TushareClient:
                 inst_ratio += hfloat
                 inst_count += 1
             else:
-                hname = str(row.get("holder_name", ""))
                 if "基金" in hname:
                     fund_ratio += hfloat
                     fund_count += 1
@@ -164,10 +177,12 @@ class TushareClient:
             "fund_ratio": round(fund_ratio, 2), "inst_ratio": round(inst_ratio, 2),
             "total_ratio": round(fund_ratio + inst_ratio, 2),
             "fund_count": fund_count, "inst_count": inst_count,
+            "gs_increased": gs_flag, "ms_increased": ms_flag,
             "data_source": "top10_floatholders",
         })
+        gs_tag = " [GS+摩根]" if gs_flag or ms_flag else ""
         logger.info(f"  {stock_name}: 基金{fund_count}家 {fund_ratio:.1f}% | "
-                    f"机构{inst_count}家 {inst_ratio:.1f}% | 合计{result['total_ratio']:.1f}%")
+                    f"机构{inst_count}家 {inst_ratio:.1f}% | 合计{result['total_ratio']:.1f}%{gs_tag}")
         return result
 
     def get_current_report_period(self) -> str:
@@ -612,6 +627,32 @@ class BarkPusher:
         self.push_segments(f"新增{len(new_stocks)}只标的 | {today}", "\n".join(lines),
                            level="timeSensitive", group="supply-chain-strategy")
 
+    def push_gs_ms_increases(self, stocks: list):
+        """推送高盛/摩根士丹利增持的股票"""
+        if not stocks:
+            return
+        today = datetime.now().strftime("%m-%d")
+        gs_list = [s for s in stocks if s.get("gs_increased")]
+        ms_list = [s for s in stocks if s.get("ms_increased")]
+        if not gs_list and not ms_list:
+            return
+
+        lines = [f"【外资巨头增持】候选池中有{len(gs_list) + len(ms_list)}只被增持:\n"]
+        if gs_list:
+            lines.append("\n▶ 高盛增持:")
+            for s in gs_list:
+                code = s.get('ts_code', s.get('code', ''))
+                lines.append(f"  • {s['name']}({code}) 基金:{s.get('fund_ratio', 0):.1f}% 机构:{s.get('inst_ratio', 0):.1f}%")
+        if ms_list:
+            lines.append("\n▶ 摩根士丹利增持:")
+            for s in ms_list:
+                code = s.get('ts_code', s.get('code', ''))
+                lines.append(f"  • {s['name']}({code}) 基金:{s.get('fund_ratio', 0):.1f}% 机构:{s.get('inst_ratio', 0):.1f}%")
+        lines.append("\n以上标的获外资巨头增持，建议重点关注。")
+        self.push_segments(f"高盛/大摩增持 {len(gs_list) + len(ms_list)}只 | {today}",
+                           "\n".join(lines), level="timeSensitive",
+                           group="supply-chain-strategy")
+
 
 # ============================================================================
 # 5. 主流程
@@ -723,6 +764,8 @@ def run(tushare: TushareClient, strategy: SupplyChainStrategy,
     print("\n" + report)
     if not dry_run and bark.key:
         bark.push_strategy_report(report, tushare.is_in_adjust_window())
+        # 额外推送：高盛/摩根士丹利增持
+        bark.push_gs_ms_increases(hold_data)
     return result
 
 
