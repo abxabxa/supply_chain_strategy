@@ -6,8 +6,7 @@
 运行方式:
     python supply_chain_strategy_merged.py              # 完整运行
     python supply_chain_strategy_merged.py --test-push  # 测试Bark推送
-    python supply_chain_strategy_merged.py --dry-run    # 试运行
-    python supply_chain_strategy_merged.py --diagnose   # 诊断300024
+    python supply_chain_strategy_merged.py --dry-run    # 试运行（不推送）
 
 环境变量（必填）:
     TUSHARE_TOKEN   Tushare Pro API Token
@@ -19,7 +18,6 @@ import hashlib
 import json
 import logging
 import os
-import re
 import sys
 import time
 from datetime import datetime, timedelta
@@ -50,13 +48,10 @@ class TushareClient:
     """Tushare Pro API 封装 -- 基于 top10_floatholders 获取真实机构持仓"""
 
     API_INTERVAL = 0.3
-    # holder_type 中文分类关键词（Tushare返回中文如"开放式投资基金"）
-    FUND_TYPE_KWS = ("基金", "ETF")  # holder_type含这些 → 基金
+    FUND_TYPE_KWS = ("基金", "ETF")
     INST_TYPE_KWS = ("社保", "QFII", "保险", "券商", "信托", "银行理财", "企业年金", "外资")
-    IGNORE_TYPE_KWS = ("一般法人", "个人")  # 这些不计入
-    # 北上资金通道（香港中央结算有限公司）→ 计入机构
-    NORTH_BOUND_KWS = ("香港中央结算", "香港结算")  # 北向资金通道
-    # 高盛/摩根士丹利名称关键词
+    IGNORE_TYPE_KWS = ("一般法人", "一般企业", "个人", "自然人")
+    NORTH_BOUND_KWS = ("香港中央结算", "香港结算")
     GS_KEYWORDS = ("高盛", "高華", "Goldman", "GSIC", "GSIP")
     MS_KEYWORDS = ("摩根士丹利", "摩根史坦利", "大摩", "Morgan Stanley", "MORGAN STANLEY")
 
@@ -148,27 +143,13 @@ class TushareClient:
         if df.empty:
             return result
 
-        # 诊断：300024(机器人)逐股东分类明细
-        if ts_code == "300024.SZ":
-            logger.info("=== DIAG 300024 逐股东分类 ===")
-            for _, r in df.iterrows():
-                hname = str(r.get('holder_name', ''))
-                htype = str(r.get('holder_type', '') or '')
-                hfloat = float(r.get('hold_float_ratio', 0) or 0)
-                is_f = any(kw in htype for kw in self.FUND_TYPE_KWS)
-                is_i = any(kw in htype for kw in self.INST_TYPE_KWS) or any(kw in hname for kw in self.NORTH_BOUND_KWS)
-                is_ig = any(kw in htype for kw in self.IGNORE_TYPE_KWS)
-                flag = "基金" if is_f else ("机构" if is_i else ("排除" if is_ig else "未知"))
-                logger.info(f"  {hname[:20]:20s} type={htype:15s} float={hfloat:5.2f}% → {flag}")
-            logger.info("=== END DIAG ===")
-
         fund_ratio = inst_ratio = 0.0
         fund_count = inst_count = 0
         gs_flag = ms_flag = False
 
         for _, row in df.iterrows():
             hname = str(row.get("holder_name", "")).strip()
-            htype = str(row.get("holder_type", "") or "").strip()  # 中文分类如"开放式投资基金"
+            htype = str(row.get("holder_type", "") or "").strip()
             hfloat = float(row.get("hold_float_ratio", 0) or 0)
             hchange = float(row.get("hold_change", 0) or 0)
 
@@ -184,7 +165,6 @@ class TushareClient:
             is_ignore = any(kw in htype for kw in self.IGNORE_TYPE_KWS)
 
             if not is_fund and not is_inst and not is_ignore:
-                # holder_type完全未知：用holder_name保守匹配
                 if any(kw in hname for kw in ("基金", "ETF", "联接")):
                     is_fund = True
                 elif any(kw in hname for kw in ("社保", "QFII", "信托计划", "养老金")):
@@ -210,12 +190,13 @@ class TushareClient:
         return result
 
     def get_current_report_period(self) -> str:
+        """根据A股季报披露截止日返回最新完整报告期"""
         now = datetime.now()
         y, m = now.year, now.month
-        if m in (1, 2, 3):      return f"{y - 1}0930"
-        elif m in (4, 5, 6, 7): return f"{y - 1}1231"
-        elif m in (8, 9, 10):   return f"{y}0630"
-        else:                    return f"{y}0930"
+        if m <= 4:       return f"{y - 1}1231"
+        elif m <= 8:     return f"{y}0331"
+        elif m <= 10:    return f"{y}0630"
+        else:            return f"{y}0930"
 
     def is_in_adjust_window(self) -> bool:
         now = datetime.now()
@@ -242,7 +223,6 @@ CORE_INDUSTRY_KWS = [
 ]
 INDUSTRY_KWS = CORE_INDUSTRY_KWS + ["储能", "电力"]
 
-# Tushare行业分类 -> 供应链标签映射
 INDUSTRY_MAP = {
     "通信设备": ["光模块", "光器件", "服务器", "高速铜缆", "通信设备"],
     "元器件":   ["PCB", "精密", "声学", "耳机", "CIS"],
@@ -387,12 +367,10 @@ class DiscoveryEngine:
             logger.error("Cannot get stock list, using cached pool")
             return self.load_pool()
 
-        # 轨道1：新闻扫描
         logger.info("Scanning news...")
         news_signals = self._scan_news(all_stocks)
         logger.info(f"   News signals: {len(news_signals)}")
 
-        # 轨道2：行业关键词过滤（始终执行，不受新闻影响）
         logger.info("Filtering by industry keywords...")
         scored = []
         for code, info in all_stocks.items():
@@ -409,7 +387,6 @@ class DiscoveryEngine:
             })
         logger.info(f"   Keyword-filtered: {len(kw_signals)}")
 
-        # 合并去重（新闻优先保留）
         best: Dict[str, Dict] = {}
         for sig in news_signals + kw_signals:
             code = sig["ts_code"]
@@ -418,7 +395,6 @@ class DiscoveryEngine:
             if code not in best:
                 best[code] = sig
 
-        # 取Top15
         candidates = []
         for code, sig in best.items():
             info = all_stocks.get(code, {})
@@ -463,7 +439,7 @@ class DiscoveryEngine:
                         "source": f"news:{row.get('src', '')}",
                         "date": str(row.get("datetime", ""))[:10],
                     })
-                    break  # 一条新闻只匹配第一只
+                    break
         return signals
 
     def load_pool(self) -> List[Dict]:
@@ -525,7 +501,7 @@ class SupplyChainStrategy:
             fund_delta = item.get("fund_ratio", 0) - item.get("fund_ratio_prev", 0)
             inst_delta = item.get("inst_ratio", 0) - item.get("inst_ratio_prev", 0)
             total_delta = fund_delta + inst_delta
-            if total_delta > 0:  # 总持仓必须正增长
+            if total_delta > 0:
                 self.calc_score(item)
                 valid.append(item)
         valid.sort(key=lambda x: x["score"], reverse=True)
@@ -705,11 +681,8 @@ def fetch_delta_data(tushare: TushareClient, candidates: List[Dict]) -> List[Dic
     current = tushare.get_current_report_period()
     year, md = int(current[:4]), current[4:]
     periods = ["0331", "0630", "0930", "1231"]
-    try:
-        idx = periods.index(md)
-        prev = f"{year - 1 if idx == 0 else year}{periods[idx - 1]}"
-    except ValueError:
-        prev = f"{year - 1}1231"
+    idx = periods.index(md)
+    prev = f"{year - 1 if idx == 0 else year}{periods[idx - 1]}"
 
     logger.info(f"Delta: current={current}, previous={prev}")
     tushare.warm_float_share_cache([c["code"] for c in candidates])
@@ -759,7 +732,6 @@ def run(tushare: TushareClient, strategy: SupplyChainStrategy,
     logger.info("SUPPLY CHAIN STRATEGY -- FULL RUN")
     logger.info("=" * 65)
 
-    # Step 1: 候选池发现
     logger.info("Step 1: Discovery")
     prev_codes = {s["code"] for s in discovery.load_pool()}
     pool = discovery.run_daily_scan()
@@ -771,15 +743,12 @@ def run(tushare: TushareClient, strategy: SupplyChainStrategy,
     if new and not dry_run and bark.key:
         bark.push_new_stocks(new)
 
-    # Step 2: 增量数据
     logger.info("Step 2: Fetch delta data")
     hold_data = fetch_delta_data(tushare, pool)
 
-    # Step 3: 排名
     logger.info("Step 3: Ranking")
     result = strategy.run(hold_data)
 
-    # Step 4: 推送
     report = result["report"]
     if new:
         report += f"\n\n今日新发现{len(new)}只标的:\n"
@@ -788,61 +757,8 @@ def run(tushare: TushareClient, strategy: SupplyChainStrategy,
     print("\n" + report)
     if not dry_run and bark.key:
         bark.push_strategy_report(report, tushare.is_in_adjust_window())
-        # 额外推送：高盛/摩根士丹利增持
         bark.push_gs_ms_increases(hold_data)
     return result
-
-
-def _diagnose_300024():
-    """300024逐股东诊断 -- 与主程序分类逻辑完全一致"""
-    token = os.getenv("TUSHARE_TOKEN", "")
-    if not token:
-        print("TUSHARE_TOKEN not set!"); sys.exit(1)
-    ts.set_token(token)
-    pro = ts.pro_api()
-
-    FUND_KWS = ("基金", "ETF")
-    INST_KWS = ("社保", "QFII", "保险", "券商", "信托", "银行理财", "企业年金", "外资")
-    IGNORE_KWS = ("一般法人", "个人")
-    NB_KWS = ("香港中央结算", "香港结算")
-
-    def _cl(hname, htype):
-        is_f = any(kw in htype for kw in FUND_KWS)
-        is_i = any(kw in htype for kw in INST_KWS)
-        is_ig = any(kw in htype for kw in IGNORE_KWS)
-        if not is_f and not is_i and not is_ig:
-            if any(kw in hname for kw in ("基金", "ETF", "联接")): is_f = True
-            elif any(kw in hname for kw in ("社保", "QFII", "信托计划", "养老金")): is_i = True
-            elif any(kw in hname for kw in NB_KWS): is_i = True
-        return "基金" if is_f else ("机构" if is_i else ("排除" if is_ig else "未知"))
-
-    print("=" * 70)
-    print("300024.SZ (机器人) 逐股东诊断")
-    print("=" * 70)
-    for period in ["20250331", "20241231"]:
-        print(f"\n{'─' * 70}\n报告期: {period}\n{'─' * 70}")
-        print(f"{'股东名称':<24} {'holder_type':<16} {'float%':>6} {'change':>8} {'分类':>6}")
-        print("-" * 70)
-        df = pro.top10_floatholders(ts_code="300024.SZ", end_date=period)
-        if df is None or df.empty:
-            print("  无数据"); continue
-        df = df.sort_values("end_date", ascending=False)
-        latest = df["end_date"].iloc[0]
-        df = df[df["end_date"] == latest].head(10)
-        ft, it = 0.0, 0.0
-        for _, r in df.iterrows():
-            hn, ht = str(r.get("holder_name", "")), str(r.get("holder_type", "") or "")
-            hf = float(r.get("hold_float_ratio", 0) or 0)
-            hc = float(r.get("hold_change", 0) or 0)
-            fl = _cl(hn, ht)
-            if fl == "基金": ft += hf
-            elif fl == "机构": it += hf
-            print(f"{hn:<24} {ht:<16} {hf:>6.2f} {hc:>+8.2f} {fl:>6}")
-        print("-" * 70)
-        print(f"{'合计':<42} 基金={ft:.2f}%  机构={it:.2f}%  总={ft+it:.2f}%")
-    print("\n" + "=" * 70)
-    print("F10对照: 2026/03/31 基金8.73% 北上1.35% | 2025/12/31 基金14.06% 北上0.96%")
-    print("=" * 70)
 
 
 def main():
@@ -854,21 +770,15 @@ def main():
   python supply_chain_strategy_merged.py              # 完整运行
   python supply_chain_strategy_merged.py --test-push  # 测试Bark
   python supply_chain_strategy_merged.py --dry-run    # 试运行
-  python supply_chain_strategy_merged.py --diagnose   # 诊断300024
         """
     )
     parser.add_argument("--test-push", action="store_true", help="测试推送")
     parser.add_argument("--dry-run", action="store_true", help="试运行")
-    parser.add_argument("--diagnose", action="store_true", help="诊断300024逐股东分类")
     args = parser.parse_args()
 
     if not os.getenv("TUSHARE_TOKEN") and not args.test_push:
         print("TUSHARE_TOKEN not set!")
         sys.exit(1)
-
-    if args.diagnose:
-        _diagnose_300024()
-        sys.exit(0)
 
     try:
         tushare, strategy, bark, discovery = setup()
