@@ -1,4 +1,4 @@
-name: Diagnose Tushare Data
+name: Diagnose 300024
 
 on:
   workflow_dispatch:  # 手动触发
@@ -18,38 +18,7 @@ jobs:
       - name: Install dependencies
         run: pip install tushare pandas requests python-dotenv
 
-      - name: Fetch 特发信息 raw data
+      - name: Diagnose 300024
         env:
           TUSHARE_TOKEN: ${{ secrets.TUSHARE_TOKEN }}
-        run: |
-          python3 << 'EOF'
-          import tushare as ts
-          import os
-          
-          ts.set_token(os.environ["TUSHARE_TOKEN"])
-          pro = ts.pro_api()
-          
-          print("=" * 60)
-          print("特发信息 000070.SZ - top10_floatholders 原始数据")
-          print("=" * 60)
-          
-          for period in ["20250331", "20241231"]:
-              print(f"\n--- 报告期: {period} ---")
-              df = pro.top10_floatholders(ts_code="000070.SZ", end_date=period)
-              if df is not None and not df.empty:
-                  for _, r in df.iterrows():
-                      print(f"\n股东: {r.get('holder_name','')}")
-                      print(f"  holder_type = '{r.get('holder_type','')}' (type={type(r.get('holder_type')).__name__})")
-                      print(f"  hold_float_ratio = {r.get('hold_float_ratio',0)}")
-                      print(f"  hold_change = {r.get('hold_change',0)}")
-                      print(f"  end_date = {r.get('end_date','')}")
-              else:
-                  print("  无数据")
-          
-          print("\n" + "=" * 60)
-          print("KEY: holder_type 的值是什么格式？")
-          print("- 数字如 '1','2','8' → 代码映射正确")
-          print("- 中文如 '基金','一般法人' → 需调整匹配逻辑")
-          print("- 空值 '' → 需依赖holder_name匹配")
-          print("=" * 60)
-          EOF
+        run: python supply_chain_strategy_merged.py --diagnose
