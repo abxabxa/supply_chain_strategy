@@ -1,20 +1,7 @@
 {
-  "last_updated": "2026-06-24 15:42:22",
+  "last_updated": "2026-06-25 16:02:05",
   "total_count": 15,
   "stocks": [
-    {
-      "code": "603586.SH",
-      "name": "金麒麟",
-      "chain": "间接供应(关键词匹配)",
-      "score": 1.4,
-      "is_direct": false,
-      "evidence": "谁推高了进口？ “金”“芯”“油”三个链条的拆分",
-      "first_seen": "",
-      "last_seen": "",
-      "status": "confirmed",
-      "est_fund": 4.5,
-      "est_inst": 21.8
-    },
     {
       "code": "000030.SZ",
       "name": "富奥股份",
@@ -22,8 +9,8 @@
       "score": 1.4,
       "is_direct": false,
       "evidence": "关键词: 汽车配件->电池,汽车配件->电机,汽车配件->汽车电子",
-      "first_seen": "2026-06-24",
-      "last_seen": "2026-06-24",
+      "first_seen": "2026-06-25",
+      "last_seen": "2026-06-25",
       "status": "confirmed",
       "est_fund": 4.7,
       "est_inst": 22.2
@@ -35,8 +22,8 @@
       "score": 1.4,
       "is_direct": false,
       "evidence": "关键词: 通信设备,通信设备->光模块,通信设备->光器件",
-      "first_seen": "2026-06-24",
-      "last_seen": "2026-06-24",
+      "first_seen": "2026-06-25",
+      "last_seen": "2026-06-25",
       "status": "confirmed",
       "est_fund": 4.5,
       "est_inst": 21.8
@@ -48,8 +35,8 @@
       "score": 1.4,
       "is_direct": false,
       "evidence": "关键词: 通信设备,通信设备->光模块,通信设备->光器件",
-      "first_seen": "2026-06-24",
-      "last_seen": "2026-06-24",
+      "first_seen": "2026-06-25",
+      "last_seen": "2026-06-25",
       "status": "confirmed",
       "est_fund": 5.1,
       "est_inst": 21.8
@@ -61,8 +48,8 @@
       "score": 1.4,
       "is_direct": false,
       "evidence": "关键词: 汽车配件->电池,汽车配件->电机,汽车配件->汽车电子",
-      "first_seen": "2026-06-24",
-      "last_seen": "2026-06-24",
+      "first_seen": "2026-06-25",
+      "last_seen": "2026-06-25",
       "status": "confirmed",
       "est_fund": 4.7,
       "est_inst": 21.8
@@ -74,8 +61,8 @@
       "score": 1.4,
       "is_direct": false,
       "evidence": "关键词: 通信设备,通信设备->光模块,通信设备->光器件",
-      "first_seen": "2026-06-24",
-      "last_seen": "2026-06-24",
+      "first_seen": "2026-06-25",
+      "last_seen": "2026-06-25",
       "status": "confirmed",
       "est_fund": 4.5,
       "est_inst": 22.0
@@ -87,8 +74,8 @@
       "score": 1.4,
       "is_direct": false,
       "evidence": "关键词: 汽车整车->电池,汽车整车->电机,汽车整车->汽车电子",
-      "first_seen": "2026-06-24",
-      "last_seen": "2026-06-24",
+      "first_seen": "2026-06-25",
+      "last_seen": "2026-06-25",
       "status": "confirmed",
       "est_fund": 5.4,
       "est_inst": 22.3
@@ -100,8 +87,8 @@
       "score": 1.4,
       "is_direct": false,
       "evidence": "关键词: 汽车配件->电池,汽车配件->电机,汽车配件->汽车电子",
-      "first_seen": "2026-06-24",
-      "last_seen": "2026-06-24",
+      "first_seen": "2026-06-25",
+      "last_seen": "2026-06-25",
       "status": "confirmed",
       "est_fund": 5.2,
       "est_inst": 22.1
@@ -113,8 +100,8 @@
       "score": 1.4,
       "is_direct": false,
       "evidence": "关键词: 通信设备,通信设备->光模块,通信设备->光器件",
-      "first_seen": "2026-06-24",
-      "last_seen": "2026-06-24",
+      "first_seen": "2026-06-25",
+      "last_seen": "2026-06-25",
       "status": "confirmed",
       "est_fund": 5.0,
       "est_inst": 21.7
@@ -126,8 +113,8 @@
       "score": 1.4,
       "is_direct": false,
       "evidence": "关键词: 汽车整车->电池,汽车整车->电机,汽车整车->汽车电子",
-      "first_seen": "2026-06-24",
-      "last_seen": "2026-06-24",
+      "first_seen": "2026-06-25",
+      "last_seen": "2026-06-25",
       "status": "confirmed",
       "est_fund": 4.7,
       "est_inst": 22.0
@@ -139,8 +126,8 @@
       "score": 1.4,
       "is_direct": false,
       "evidence": "关键词: 汽车配件->电池,汽车配件->电机,汽车配件->汽车电子",
-      "first_seen": "2026-06-24",
-      "last_seen": "2026-06-24",
+      "first_seen": "2026-06-25",
+      "last_seen": "2026-06-25",
       "status": "confirmed",
       "est_fund": 4.7,
       "est_inst": 21.8
@@ -152,8 +139,8 @@
       "score": 1.4,
       "is_direct": false,
       "evidence": "关键词: 通信设备,通信设备->光模块,通信设备->光器件",
-      "first_seen": "2026-06-24",
-      "last_seen": "2026-06-24",
+      "first_seen": "2026-06-25",
+      "last_seen": "2026-06-25",
       "status": "confirmed",
       "est_fund": 5.1,
       "est_inst": 21.8
@@ -165,8 +152,8 @@
       "score": 1.4,
       "is_direct": false,
       "evidence": "关键词: 汽车配件->电池,汽车配件->电机,汽车配件->汽车电子",
-      "first_seen": "2026-06-24",
-      "last_seen": "2026-06-24",
+      "first_seen": "2026-06-25",
+      "last_seen": "2026-06-25",
       "status": "confirmed",
       "est_fund": 4.5,
       "est_inst": 22.0
@@ -178,8 +165,8 @@
       "score": 1.4,
       "is_direct": false,
       "evidence": "关键词: 汽车配件->电池,汽车配件->电机,汽车配件->汽车电子",
-      "first_seen": "2026-06-24",
-      "last_seen": "2026-06-24",
+      "first_seen": "2026-06-25",
+      "last_seen": "2026-06-25",
       "status": "confirmed",
       "est_fund": 5.3,
       "est_inst": 21.8
@@ -191,11 +178,24 @@
       "score": 1.4,
       "is_direct": false,
       "evidence": "关键词: 汽车整车->电池,汽车整车->电机,汽车整车->汽车电子",
-      "first_seen": "2026-06-24",
-      "last_seen": "2026-06-24",
+      "first_seen": "2026-06-25",
+      "last_seen": "2026-06-25",
       "status": "confirmed",
       "est_fund": 4.8,
       "est_inst": 21.7
+    },
+    {
+      "code": "000678.SZ",
+      "name": "襄阳轴承",
+      "chain": "间接供应(关键词匹配)",
+      "score": 1.4,
+      "is_direct": false,
+      "evidence": "关键词: 汽车配件->电池,汽车配件->电机,汽车配件->汽车电子",
+      "first_seen": "2026-06-25",
+      "last_seen": "2026-06-25",
+      "status": "confirmed",
+      "est_fund": 4.7,
+      "est_inst": 22.2
     }
   ]
 }
