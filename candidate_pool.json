@@ -1,7 +1,33 @@
 {
-  "last_updated": "2026-09-28 20:11:28",
+  "last_updated": "2026-09-29 18:48:25",
   "total_count": 15,
   "stocks": [
+    {
+      "code": "920202.BJ",
+      "name": "N安达",
+      "chain": "间接供应(关键词匹配)",
+      "score": 1.4,
+      "is_direct": false,
+      "evidence": "关键词: 汽车配件->电池,汽车配件->电机,汽车配件->汽车电子",
+      "first_seen": "2026-09-29",
+      "last_seen": "2026-09-29",
+      "status": "confirmed",
+      "est_fund": 5.3,
+      "est_inst": 21.6
+    },
+    {
+      "code": "301716.SZ",
+      "name": "N鸿富诚",
+      "chain": "间接供应(关键词匹配)",
+      "score": 1.4,
+      "is_direct": false,
+      "evidence": "关键词: 半导体->芯片,半导体->AI芯片,半导体->GPU",
+      "first_seen": "2026-09-29",
+      "last_seen": "2026-09-29",
+      "status": "confirmed",
+      "est_fund": 5.2,
+      "est_inst": 22.3
+    },
     {
       "code": "688801.SH",
       "name": "燧原科技",
@@ -9,8 +35,8 @@
       "score": 1.4,
       "is_direct": false,
       "evidence": "关键词: 半导体->芯片,半导体->AI芯片,半导体->GPU",
-      "first_seen": "2026-09-28",
-      "last_seen": "2026-09-28",
+      "first_seen": "2026-09-29",
+      "last_seen": "2026-09-29",
       "status": "confirmed",
       "est_fund": 4.6,
       "est_inst": 22.3
@@ -22,8 +48,8 @@
       "score": 1.4,
       "is_direct": false,
       "evidence": "关键词: 汽车配件->电池,汽车配件->电机,汽车配件->汽车电子",
-      "first_seen": "2026-09-28",
-      "last_seen": "2026-09-28",
+      "first_seen": "2026-09-29",
+      "last_seen": "2026-09-29",
       "status": "confirmed",
       "est_fund": 4.7,
       "est_inst": 22.2
@@ -35,8 +61,8 @@
       "score": 1.4,
       "is_direct": false,
       "evidence": "关键词: 汽车配件->电池,汽车配件->电机,汽车配件->汽车电子",
-      "first_seen": "2026-09-28",
-      "last_seen": "2026-09-28",
+      "first_seen": "2026-09-29",
+      "last_seen": "2026-09-29",
       "status": "confirmed",
       "est_fund": 5.0,
       "est_inst": 22.3
@@ -48,8 +74,8 @@
       "score": 1.4,
       "is_direct": false,
       "evidence": "关键词: 汽车配件->电池,汽车配件->电机,汽车配件->汽车电子",
-      "first_seen": "2026-09-28",
-      "last_seen": "2026-09-28",
+      "first_seen": "2026-09-29",
+      "last_seen": "2026-09-29",
       "status": "confirmed",
       "est_fund": 4.8,
       "est_inst": 22.3
@@ -61,8 +87,8 @@
       "score": 1.4,
       "is_direct": false,
       "evidence": "关键词: 汽车配件->电池,汽车配件->电机,汽车配件->汽车电子",
-      "first_seen": "2026-09-28",
-      "last_seen": "2026-09-28",
+      "first_seen": "2026-09-29",
+      "last_seen": "2026-09-29",
       "status": "confirmed",
       "est_fund": 4.9,
       "est_inst": 21.8
@@ -74,8 +100,8 @@
       "score": 1.4,
       "is_direct": false,
       "evidence": "关键词: 半导体->芯片,半导体->AI芯片,半导体->GPU",
-      "first_seen": "2026-09-28",
-      "last_seen": "2026-09-28",
+      "first_seen": "2026-09-29",
+      "last_seen": "2026-09-29",
       "status": "confirmed",
       "est_fund": 5.0,
       "est_inst": 22.3
@@ -87,8 +113,8 @@
       "score": 1.4,
       "is_direct": false,
       "evidence": "关键词: 半导体->芯片,半导体->AI芯片,半导体->GPU",
-      "first_seen": "2026-09-28",
-      "last_seen": "2026-09-28",
+      "first_seen": "2026-09-29",
+      "last_seen": "2026-09-29",
       "status": "confirmed",
       "est_fund": 4.9,
       "est_inst": 22.0
@@ -100,8 +126,8 @@
       "score": 1.4,
       "is_direct": false,
       "evidence": "关键词: 汽车配件->电池,汽车配件->电机,汽车配件->汽车电子",
-      "first_seen": "2026-09-28",
-      "last_seen": "2026-09-28",
+      "first_seen": "2026-09-29",
+      "last_seen": "2026-09-29",
       "status": "confirmed",
       "est_fund": 5.3,
       "est_inst": 21.8
@@ -113,8 +139,8 @@
       "score": 1.4,
       "is_direct": false,
       "evidence": "关键词: 精密,汽车配件->电池,汽车配件->电机",
-      "first_seen": "2026-09-28",
-      "last_seen": "2026-09-28",
+      "first_seen": "2026-09-29",
+      "last_seen": "2026-09-29",
       "status": "confirmed",
       "est_fund": 5.4,
       "est_inst": 22.1
@@ -126,8 +152,8 @@
       "score": 1.4,
       "is_direct": false,
       "evidence": "关键词: 半导体->芯片,半导体->AI芯片,半导体->GPU",
-      "first_seen": "2026-09-28",
-      "last_seen": "2026-09-28",
+      "first_seen": "2026-09-29",
+      "last_seen": "2026-09-29",
       "status": "confirmed",
       "est_fund": 5.3,
       "est_inst": 22.2
@@ -139,8 +165,8 @@
       "score": 1.4,
       "is_direct": false,
       "evidence": "关键词: 汽车配件->电池,汽车配件->电机,汽车配件->汽车电子",
-      "first_seen": "2026-09-28",
-      "last_seen": "2026-09-28",
+      "first_seen": "2026-09-29",
+      "last_seen": "2026-09-29",
       "status": "confirmed",
       "est_fund": 4.8,
       "est_inst": 22.3
@@ -152,8 +178,8 @@
       "score": 1.4,
       "is_direct": false,
       "evidence": "关键词: 汽车配件->电池,汽车配件->电机,汽车配件->汽车电子",
-      "first_seen": "2026-09-28",
-      "last_seen": "2026-09-28",
+      "first_seen": "2026-09-29",
+      "last_seen": "2026-09-29",
       "status": "confirmed",
       "est_fund": 4.6,
       "est_inst": 22.3
@@ -165,37 +191,11 @@
       "score": 1.4,
       "is_direct": false,
       "evidence": "关键词: 汽车配件->电池,汽车配件->电机,汽车配件->汽车电子",
-      "first_seen": "2026-09-28",
-      "last_seen": "2026-09-28",
+      "first_seen": "2026-09-29",
+      "last_seen": "2026-09-29",
       "status": "confirmed",
       "est_fund": 5.0,
       "est_inst": 21.7
-    },
-    {
-      "code": "920055.BJ",
-      "name": "隆源股份",
-      "chain": "间接供应(关键词匹配)",
-      "score": 1.4,
-      "is_direct": false,
-      "evidence": "关键词: 汽车配件->电池,汽车配件->电机,汽车配件->汽车电子",
-      "first_seen": "2026-09-28",
-      "last_seen": "2026-09-28",
-      "status": "confirmed",
-      "est_fund": 5.0,
-      "est_inst": 22.3
-    },
-    {
-      "code": "688820.SH",
-      "name": "盛合晶微",
-      "chain": "间接供应(关键词匹配)",
-      "score": 1.4,
-      "is_direct": false,
-      "evidence": "关键词: 半导体->芯片,半导体->AI芯片,半导体->GPU",
-      "first_seen": "2026-09-28",
-      "last_seen": "2026-09-28",
-      "status": "confirmed",
-      "est_fund": 5.3,
-      "est_inst": 21.8
     }
   ]
 }
