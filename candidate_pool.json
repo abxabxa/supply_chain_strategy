@@ -1,5 +1,5 @@
 {
-  "last_updated": "2026-10-19 19:24:56",
+  "last_updated": "2026-10-20 18:04:02",
   "total_count": 15,
   "stocks": [
     {
@@ -9,8 +9,8 @@
       "score": 1.4,
       "is_direct": false,
       "evidence": "关键词: 汽车配件->电池,汽车配件->电机,汽车配件->汽车电子",
-      "first_seen": "2026-10-19",
-      "last_seen": "2026-10-19",
+      "first_seen": "2026-10-20",
+      "last_seen": "2026-10-20",
       "status": "confirmed",
       "est_fund": 5.1,
       "est_inst": 22.0
@@ -22,24 +22,24 @@
       "score": 1.4,
       "is_direct": false,
       "evidence": "关键词: 通信设备,通信设备->光模块,通信设备->光器件",
-      "first_seen": "2026-10-19",
-      "last_seen": "2026-10-19",
+      "first_seen": "2026-10-20",
+      "last_seen": "2026-10-20",
       "status": "confirmed",
       "est_fund": 5.3,
       "est_inst": 21.6
     },
     {
       "code": "301660.SZ",
-      "name": "C粤芯半导体",
+      "name": "粤芯半导体",
       "chain": "间接供应(关键词匹配)",
       "score": 1.4,
       "is_direct": false,
       "evidence": "关键词: 半导体->芯片,半导体->AI芯片,半导体->GPU",
-      "first_seen": "2026-10-19",
-      "last_seen": "2026-10-19",
+      "first_seen": "2026-10-20",
+      "last_seen": "2026-10-20",
       "status": "confirmed",
-      "est_fund": 4.6,
-      "est_inst": 22.3
+      "est_fund": 4.8,
+      "est_inst": 21.9
     },
     {
       "code": "920202.BJ",
@@ -48,8 +48,8 @@
       "score": 1.4,
       "is_direct": false,
       "evidence": "关键词: 汽车配件->电池,汽车配件->电机,汽车配件->汽车电子",
-      "first_seen": "2026-10-19",
-      "last_seen": "2026-10-19",
+      "first_seen": "2026-10-20",
+      "last_seen": "2026-10-20",
       "status": "confirmed",
       "est_fund": 4.8,
       "est_inst": 21.7
@@ -61,8 +61,8 @@
       "score": 1.4,
       "is_direct": false,
       "evidence": "关键词: 半导体->芯片,半导体->AI芯片,半导体->GPU",
-      "first_seen": "2026-10-19",
-      "last_seen": "2026-10-19",
+      "first_seen": "2026-10-20",
+      "last_seen": "2026-10-20",
       "status": "confirmed",
       "est_fund": 4.7,
       "est_inst": 22.0
@@ -74,8 +74,8 @@
       "score": 1.4,
       "is_direct": false,
       "evidence": "关键词: 半导体->芯片,半导体->AI芯片,半导体->GPU",
-      "first_seen": "2026-10-19",
-      "last_seen": "2026-10-19",
+      "first_seen": "2026-10-20",
+      "last_seen": "2026-10-20",
       "status": "confirmed",
       "est_fund": 4.6,
       "est_inst": 22.3
@@ -87,8 +87,8 @@
       "score": 1.4,
       "is_direct": false,
       "evidence": "关键词: 汽车配件->电池,汽车配件->电机,汽车配件->汽车电子",
-      "first_seen": "2026-10-19",
-      "last_seen": "2026-10-19",
+      "first_seen": "2026-10-20",
+      "last_seen": "2026-10-20",
       "status": "confirmed",
       "est_fund": 4.7,
       "est_inst": 22.2
@@ -100,8 +100,8 @@
       "score": 1.4,
       "is_direct": false,
       "evidence": "关键词: 汽车配件->电池,汽车配件->电机,汽车配件->汽车电子",
-      "first_seen": "2026-10-19",
-      "last_seen": "2026-10-19",
+      "first_seen": "2026-10-20",
+      "last_seen": "2026-10-20",
       "status": "confirmed",
       "est_fund": 5.0,
       "est_inst": 22.3
@@ -113,8 +113,8 @@
       "score": 1.4,
       "is_direct": false,
       "evidence": "关键词: 汽车配件->电池,汽车配件->电机,汽车配件->汽车电子",
-      "first_seen": "2026-10-19",
-      "last_seen": "2026-10-19",
+      "first_seen": "2026-10-20",
+      "last_seen": "2026-10-20",
       "status": "confirmed",
       "est_fund": 4.8,
       "est_inst": 22.3
@@ -126,8 +126,8 @@
       "score": 1.4,
       "is_direct": false,
       "evidence": "关键词: 汽车配件->电池,汽车配件->电机,汽车配件->汽车电子",
-      "first_seen": "2026-10-19",
-      "last_seen": "2026-10-19",
+      "first_seen": "2026-10-20",
+      "last_seen": "2026-10-20",
       "status": "confirmed",
       "est_fund": 4.9,
       "est_inst": 21.8
@@ -139,8 +139,8 @@
       "score": 1.4,
       "is_direct": false,
       "evidence": "关键词: 半导体->芯片,半导体->AI芯片,半导体->GPU",
-      "first_seen": "2026-10-19",
-      "last_seen": "2026-10-19",
+      "first_seen": "2026-10-20",
+      "last_seen": "2026-10-20",
       "status": "confirmed",
       "est_fund": 5.0,
       "est_inst": 22.3
@@ -152,8 +152,8 @@
       "score": 1.4,
       "is_direct": false,
       "evidence": "关键词: 半导体->芯片,半导体->AI芯片,半导体->GPU",
-      "first_seen": "2026-10-19",
-      "last_seen": "2026-10-19",
+      "first_seen": "2026-10-20",
+      "last_seen": "2026-10-20",
       "status": "confirmed",
       "est_fund": 4.9,
       "est_inst": 22.0
@@ -165,8 +165,8 @@
       "score": 1.4,
       "is_direct": false,
       "evidence": "关键词: 汽车配件->电池,汽车配件->电机,汽车配件->汽车电子",
-      "first_seen": "2026-10-19",
-      "last_seen": "2026-10-19",
+      "first_seen": "2026-10-20",
+      "last_seen": "2026-10-20",
       "status": "confirmed",
       "est_fund": 5.3,
       "est_inst": 21.8
@@ -178,8 +178,8 @@
       "score": 1.4,
       "is_direct": false,
       "evidence": "关键词: 精密,汽车配件->电池,汽车配件->电机",
-      "first_seen": "2026-10-19",
-      "last_seen": "2026-10-19",
+      "first_seen": "2026-10-20",
+      "last_seen": "2026-10-20",
       "status": "confirmed",
       "est_fund": 5.4,
       "est_inst": 22.1
@@ -191,8 +191,8 @@
       "score": 1.4,
       "is_direct": false,
       "evidence": "关键词: 半导体->芯片,半导体->AI芯片,半导体->GPU",
-      "first_seen": "2026-10-19",
-      "last_seen": "2026-10-19",
+      "first_seen": "2026-10-20",
+      "last_seen": "2026-10-20",
       "status": "confirmed",
       "est_fund": 5.3,
       "est_inst": 22.2
